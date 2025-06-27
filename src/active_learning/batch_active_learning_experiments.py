@@ -25,10 +25,6 @@ class ALExperimentRunner():
         self.model_name = model.__class__.__name__
         self.strategy_name_str = str(self.al_strategy)
 
-        # Store each round of data for analysis
-        self.all_X_LF = []
-        self.all_X_HF = []
-
         if self.config.random_seed is not None:
             np.random.seed(self.config.random_seed)
 
@@ -67,140 +63,153 @@ class ALExperimentRunner():
         return scaled_samples
 
     def run_experiment(self):
+        results_history = []
 
         self.logger.info("Starting experiment run...")
-        results_history = []
 
         # 1. Generate fixed Test Data for ELPP evaluation
         X_test = self._generate_lhs_samples(self.config.N_test)
         Y_test = self.dataset.sample_HF(X_test)
         self.logger.info(f"Generated {self.config.N_test} test points for ELPP evaluation.")
 
-        # 2. Initial Data
-        X_L_train = self._generate_lhs_samples(self.config.N_L_init)
-        Y_L_train = self.dataset.sample_LF(X_L_train) if self.config.N_L_init > 0 else np.empty((0, 1))
+        # Outer loop, repeat for uncertainties in AL method comparison
+        for run_iter in range(self.config.N_reps):
+            rep_outdir = self.outdir / f"rep_{run_iter:02d}"
+            rep_outdir.mkdir()
 
-        X_H_train = self._generate_lhs_samples(self.config.N_H_init)
-        Y_H_train = self.dataset.sample_HF(X_H_train) if self.config.N_H_init > 0 else np.empty((0, 1))
+            all_X_LF = []
+            all_X_HF = []
 
-        initial_cost = (self.config.N_L_init * self.dataset.c_LF +
-                        self.config.N_H_init * self.dataset.c_HF)
+            # 2. Initial Data
+            X_L_train = self._generate_lhs_samples(self.config.N_L_init)
+            Y_L_train = self.dataset.sample_LF(X_L_train) if self.config.N_L_init > 0 else np.empty((0, 1))
 
-        current_total_cost = initial_cost
+            X_H_train = self._generate_lhs_samples(self.config.N_H_init)
+            Y_H_train = self.dataset.sample_HF(X_H_train) if self.config.N_H_init > 0 else np.empty((0, 1))
 
-        # 4. Plot initial data
-        plot_bf_training_data(
-            X_LF=X_L_train, Y_LF=Y_L_train,
-            X_HF=X_H_train, Y_HF=Y_H_train,
-            outpath=os.path.join(self.outdir, f"data_plot_0.png"))
+            initial_cost = (self.config.N_L_init * self.dataset.c_LF +
+                            self.config.N_H_init * self.dataset.c_HF)
 
-        # 5. Initial Model Training and Evaluation (Round 0)
-        self.logger.info("Training initial model...")
-        self.model.train_model(X_L_train, Y_L_train, X_H_train, Y_H_train, self.config.train_lr, self.config.train_epochs)
-        elpp_round_0 = self.model.evaluate_elpp(X_test, Y_test)
-        self.logger.info(f"Round 0: ELPP = {elpp_round_0:.4f}, Cost = {current_total_cost:.2f}")
+            current_total_cost = initial_cost
 
-        plot_bfgpc_predictions_two_axes(model=self.model, true_p_LF=self.dataset.true_p_LF, true_p_HF=self.dataset.true_p_HF,
-                                        outpath=os.path.join(self.outdir, f"model_predictions_0.png"))
+            # 4. Plot initial data
+            plot_bf_training_data(
+                X_LF=X_L_train, Y_LF=Y_L_train,
+                X_HF=X_H_train, Y_HF=Y_H_train,
+                outpath=rep_outdir / f"data_plot_0.png")
 
-        results_history.append({
-            "round": 0,
-            "cumulative_cost": current_total_cost,
-            "elpp": elpp_round_0,
-            "lf_queried_this_round": 0,  # Initial points are not "queried" in AL sense
-            "hf_queried_this_round": 0,
-            "total_lf_samples": X_L_train.shape[0],
-            "total_hf_samples": X_H_train.shape[0]
-        })
-
-        # 6. Active Learning Loop
-        num_al_rounds = len(self.config.cost_constraints)
-        for i_round in range(num_al_rounds):
-            budget_for_this_step = self.config.cost_constraints[i_round]
-            al_round_num = i_round + 1
-
-            self.logger.info(f"\n--- Starting AL Round {al_round_num}/{num_al_rounds} ---")
-            self.logger.info(f"Current total cost: {current_total_cost:.2f}")
-            self.logger.info(f"Budget for this step: {budget_for_this_step:.2f}")
-
-
-            # Get batch from strategy
-            self.logger.info(f"Querying strategy for batch with budget {budget_for_this_step:.2f}...")
-            new_X_L, new_X_H = self.al_strategy.select_batch(
-                config=self.config,
-                current_model_trained=self.model,  # Pass the currently trained model instance
-                budget_this_step=budget_for_this_step
-            )
-            self.logger.info(f"Strategy selected {len(new_X_L)} LF and {len(new_X_H)} HF points.")
-
-
-            cost_this_batch = 0
-
-            if len(new_X_L) > 0:
-                cost_this_batch += len(new_X_L) * self.dataset.c_LF
-                new_Y_L = self.dataset.sample_LF(new_X_L)
-
-                # Update training data
-                X_L_train = np.concatenate([X_L_train, new_X_L], axis=0) if X_L_train.size > 0 else new_X_L
-                Y_L_train = np.concatenate([Y_L_train, new_Y_L], axis=0) if Y_L_train.size > 0 else new_Y_L
-
-                self.all_X_LF.append(new_X_L)
-
-            if len(new_X_H) > 0:
-                cost_this_batch += len(new_X_H) * self.dataset.c_HF
-                new_Y_H = self.dataset.sample_HF(new_X_H)
-
-                # Update training data
-                X_H_train = np.concatenate([X_H_train, new_X_H], axis=0) if X_H_train.size > 0 else new_X_H
-                Y_H_train = np.concatenate([Y_H_train, new_Y_H], axis=0) if Y_H_train.size > 0 else new_Y_H
-
-                self.all_X_HF.append(new_X_H)
-
-            current_total_cost += cost_this_batch
-
-            # Retrain model
-            self.logger.info(f"Retraining model with new dataset of size {X_L_train.shape[0]} and {X_H_train.shape[0]}.")
-            model = BFGPC_ELBO(train_x_lf=torch.tensor(X_L_train).float(),
-                               train_x_hf=torch.tensor(X_H_train).float())
-            self.model = model
+            # 5. Initial Model Training and Evaluation (Round 0)
+            self.logger.info("Training initial model...")
             self.model.train_model(X_L_train, Y_L_train, X_H_train, Y_H_train, self.config.train_lr, self.config.train_epochs)
+            elpp_round_0 = self.model.evaluate_elpp(X_test, Y_test)
+            self.logger.info(f"Round 0: ELPP = {elpp_round_0:.4f}, Cost = {current_total_cost:.2f}")
 
-            # Evaluate ELPP
-            current_elpp = self.model.evaluate_elpp(X_test, Y_test)
-            self.logger.info(
-                f"Round {al_round_num}: ELPP = {current_elpp:.4f}, Cost Incurred this round = {cost_this_batch:.2f}, Cumulative Cost = {current_total_cost:.2f}")
+            plot_bfgpc_predictions_two_axes(model=self.model, true_p_LF=self.dataset.true_p_LF, true_p_HF=self.dataset.true_p_HF,
+                                            outpath=rep_outdir / f"model_predictions_0.png")
 
             results_history.append({
-                "round": al_round_num,
+                "repeat": run_iter,
+                "round": 0,
                 "cumulative_cost": current_total_cost,
-                "elpp": current_elpp,
-                "lf_queried_this_round": len(new_X_L),
-                "hf_queried_this_round": len(new_X_H),
+                "elpp": elpp_round_0,
+                "lf_queried_this_round": self.config.N_L_init,
+                "hf_queried_this_round": self.config.N_H_init,
                 "total_lf_samples": X_L_train.shape[0],
                 "total_hf_samples": X_H_train.shape[0]
             })
 
-            plot_bf_training_data(
-                X_LF=X_L_train, Y_LF=Y_L_train,
-                X_HF=X_H_train, Y_HF=Y_H_train,
-                outpath=os.path.join(self.outdir, f"data_plot_{al_round_num}.png"))
+            # 6. Active Learning Loop
+            num_al_rounds = len(self.config.cost_constraints)
+            for i_round in range(num_al_rounds):
+                budget_for_this_step = self.config.cost_constraints[i_round]
+                al_round_num = i_round + 1
 
-            # Plot current model predictions
-            plot_bfgpc_predictions_two_axes(model=self.model, true_p_LF=self.dataset.true_p_LF, true_p_HF=self.dataset.true_p_HF,
-                                            outpath=os.path.join(self.outdir, f"model_predictions_{al_round_num}.png"))
+                self.logger.info(f"\n--- Starting AL Round {al_round_num}/{num_al_rounds} ---")
+                self.logger.info(f"Current total cost: {current_total_cost:.2f}")
+                self.logger.info(f"Budget for this step: {budget_for_this_step:.2f}")
 
-        # Plot history of training data
-        plot_active_learning_training_data(self.all_X_LF, self.all_X_HF,
-                                           outpath=os.path.join(self.outdir, f"active_learning_training_data.png"))
+
+                # Get batch from strategy
+                self.logger.info(f"Querying strategy for batch with budget {budget_for_this_step:.2f}...")
+                new_X_L, new_X_H = self.al_strategy.select_batch(
+                    config=self.config,
+                    current_model_trained=self.model,  # Pass the currently trained model instance
+                    budget_this_step=budget_for_this_step
+                )
+                self.logger.info(f"Strategy selected {len(new_X_L)} LF and {len(new_X_H)} HF points.")
+
+
+                cost_this_batch = 0
+
+                if len(new_X_L) > 0:
+                    cost_this_batch += len(new_X_L) * self.dataset.c_LF
+                    new_Y_L = self.dataset.sample_LF(new_X_L)
+
+                    # Update training data
+                    X_L_train = np.concatenate([X_L_train, new_X_L], axis=0) if X_L_train.size > 0 else new_X_L
+                    Y_L_train = np.concatenate([Y_L_train, new_Y_L], axis=0) if Y_L_train.size > 0 else new_Y_L
+
+                    all_X_LF.append(new_X_L)
+
+                if len(new_X_H) > 0:
+                    cost_this_batch += len(new_X_H) * self.dataset.c_HF
+                    new_Y_H = self.dataset.sample_HF(new_X_H)
+
+                    # Update training data
+                    X_H_train = np.concatenate([X_H_train, new_X_H], axis=0) if X_H_train.size > 0 else new_X_H
+                    Y_H_train = np.concatenate([Y_H_train, new_Y_H], axis=0) if Y_H_train.size > 0 else new_Y_H
+
+                    all_X_HF.append(new_X_H)
+
+                current_total_cost += cost_this_batch
+
+                # Retrain model
+                self.logger.info(f"Retraining model with new dataset of size {X_L_train.shape[0]} and {X_H_train.shape[0]}.")
+                model = BFGPC_ELBO()
+                self.model = model
+                self.model.train_model(X_L_train, Y_L_train, X_H_train, Y_H_train, self.config.train_lr, self.config.train_epochs)
+
+                # Evaluate ELPP
+                current_elpp = self.model.evaluate_elpp(X_test, Y_test)
+                self.logger.info(
+                    f"Round {al_round_num}: ELPP = {current_elpp:.4f}, Cost Incurred this round = {cost_this_batch:.2f}, Cumulative Cost = {current_total_cost:.2f}")
+
+                results_history.append({
+                    "repeat": run_iter,
+                    "round": al_round_num,
+                    "cumulative_cost": current_total_cost,
+                    "elpp": current_elpp,
+                    "lf_queried_this_round": len(new_X_L),
+                    "hf_queried_this_round": len(new_X_H),
+                    "total_lf_samples": X_L_train.shape[0],
+                    "total_hf_samples": X_H_train.shape[0]
+                })
+
+                plot_bf_training_data(
+                    X_LF=X_L_train, Y_LF=Y_L_train,
+                    X_HF=X_H_train, Y_HF=Y_H_train,
+                    outpath=rep_outdir / f"data_plot_{al_round_num}.png")
+
+                # Plot current model predictions
+                plot_bfgpc_predictions_two_axes(model=self.model, true_p_LF=self.dataset.true_p_LF, true_p_HF=self.dataset.true_p_HF,
+                                                outpath=rep_outdir / f"model_predictions_{al_round_num}.png")
+
+            self.logger.info("AL loop complete")
+
+            # Plot history of training data
+            plot_active_learning_training_data(all_X_LF, all_X_HF,
+                                               outpath=rep_outdir / f"active_learning_training_data.png")
+
+        self.logger.info("All repeats complete")
 
         # 7. Save results to CSV
         results_df = pd.DataFrame(results_history)
-        csv_path = os.path.join(self.outdir, "experiment_results.csv")
+        csv_path = self.outdir / "results.csv"
         results_df.to_csv(csv_path, index=False)
         self.logger.info(f"Experiment finished. Results saved to {csv_path}")
 
         # Plot ELPP history
-        plot_al_summary_from_dataframe_mpl(results_df, outpath=os.path.join(self.outdir, f"al_summary.png"))
+        plot_al_summary_from_dataframe_mpl(results_df, outpath=self.outdir / f"summary.png")
 
         # Log config
         config_dict = self.config.__dict__

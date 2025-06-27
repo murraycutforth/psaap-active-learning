@@ -205,6 +205,7 @@ def plot_bfgpc_predictions_two_axes(model, grid_res=100, X_LF=None, Y_LF=None, X
     if outpath:
         plt.savefig(outpath, dpi=300)
         logger.info(f"Plot saved to {outpath}")
+        plt.close()
     else:
         plt.show()
 
@@ -224,7 +225,6 @@ def plot_bf_training_data(X_LF, Y_LF, X_HF, Y_HF, boundary_LF=None, boundary_HF=
         plt.plot(x_boundary_plot, y_boundary_l_plot.squeeze(), 'b--', label='True LF Boundary')
         plt.plot(x_boundary_plot, y_boundary_h_plot.squeeze(), 'r--', label='True HF Boundary')
 
-    plt.title('Initial Training Data')
     plt.xlabel('X1')
     plt.ylabel('X2')
     plt.legend()
@@ -233,6 +233,7 @@ def plot_bf_training_data(X_LF, Y_LF, X_HF, Y_HF, boundary_LF=None, boundary_HF=
 
     if outpath is not None:
         plt.savefig(outpath)
+        plt.close()
     else:
         plt.show()
 
@@ -326,11 +327,7 @@ def plot_al_summary_from_dataframe_mpl(results_df: pd.DataFrame, outpath: str = 
 
     The plot will show:
     1. ELPP vs. Cumulative Cost.
-    2. Number of LF samples queried per round vs. Round.
-    3. Number of HF samples queried per round vs. Round.
-    4. Total LF samples vs. Cumulative Cost.
-    5. Total HF samples vs. Cumulative Cost.
-    6. Cumulative Cost vs. Round.
+    2. Number of HF/LF samples queried vs round
 
     Args:
         results_df (pd.DataFrame): DataFrame containing the active learning history
@@ -342,7 +339,7 @@ def plot_al_summary_from_dataframe_mpl(results_df: pd.DataFrame, outpath: str = 
     if not isinstance(results_df, pd.DataFrame):
         raise TypeError("results_df must be a pandas DataFrame.")
 
-    required_cols = ["round", "cumulative_cost", "elpp",
+    required_cols = ["repeat", "round", "cumulative_cost", "elpp",
                      "lf_queried_this_round", "hf_queried_this_round",
                      "total_lf_samples", "total_hf_samples"]
     for col in required_cols:
@@ -350,89 +347,33 @@ def plot_al_summary_from_dataframe_mpl(results_df: pd.DataFrame, outpath: str = 
             raise ValueError(f"DataFrame is missing required column: {col}")
 
     # Create a figure with multiple subplots
-    fig, axs = plt.subplots(3, 2, figsize=(14, 15), dpi=100)
-    fig.suptitle('Active Learning Summary (Matplotlib)', fontsize=18, y=0.995)  # y slightly adjusted
+    fig, axs = plt.subplots(1, 2, figsize=(8, 4), dpi=200)
+    fig.suptitle('Active Learning Summary', fontsize=18, y=0.995)  # y slightly adjusted
 
     # --- 1. ELPP vs. Cumulative Cost (Main Performance Metric) ---
-    ax = axs[0, 0]
-    ax.plot(results_df["cumulative_cost"], results_df["elpp"], marker='o', linestyle='-', color='dodgerblue', mec='b')
-    ax.set_xlabel("Cumulative Cost")
-    ax.set_ylabel("Expected Log Pointwise Predictive (ELPP)")
-    ax.set_title("ELPP vs. Cumulative Cost")
+    ax = axs[0]
+    #ax.plot(grouped["cumulative_cost"].mean(), grouped["elpp"].mean(), marker='o', linestyle='-', color='dodgerblue', mec='b')
+    ax.scatter(results_df["round"], results_df["elpp"], marker='o', color='dodgerblue')
+    ax.set_xlabel("Round")
+    ax.set_ylabel("ELPP")
+    ax.set_title("ELPP vs. Round")
     ax.grid(True, linestyle=':', alpha=0.6)
-    if len(results_df) <= 15:
-        for i, txt in enumerate(results_df["round"]):
-            ax.annotate(f"R{txt}", (results_df["cumulative_cost"].iloc[i], results_df["elpp"].iloc[i]),
-                        textcoords="offset points", xytext=(0, 5), ha='center', fontsize=8)
+    ax.spines['top'].set_visible(False)  # Remove top and right spines for cleaner look
+    ax.spines['right'].set_visible(False)
 
-    # --- 2. Number of LF samples queried per round vs. Round ---
-    ax = axs[0, 1]
-    ax.bar(results_df["round"], results_df["lf_queried_this_round"], color='skyblue', edgecolor='steelblue',
-           label='LF Queried')
-    ax.set_xlabel("Active Learning Round")
+    # --- 2. Number of LF/HF queried per round vs. Round ---
+    ax = axs[1]
+    ax.scatter(results_df["round"], results_df["lf_queried_this_round"], label='LF Queried')
+    ax.scatter(results_df["round"], results_df["hf_queried_this_round"], label='HF Queried')
+    ax.set_xlabel("Round")
     ax.set_ylabel("Number of Samples Queried")
     ax.set_title("LF Samples Queried per Round")
-    ax.grid(True, axis='y', linestyle=':', alpha=0.6)
+    ax.grid(True, linestyle=':', alpha=0.6)
     ax.legend()
     if len(results_df["round"].unique()) == len(results_df["round"]):
         ax.set_xticks(results_df["round"])
     ax.spines['top'].set_visible(False)  # Remove top and right spines for cleaner look
     ax.spines['right'].set_visible(False)
-
-    # --- 3. Number of HF samples queried per round vs. Round ---
-    ax = axs[1, 0]
-    ax.bar(results_df["round"], results_df["hf_queried_this_round"], color='lightcoral', edgecolor='firebrick',
-           label='HF Queried')
-    ax.set_xlabel("Active Learning Round")
-    ax.set_ylabel("Number of Samples Queried")
-    ax.set_title("HF Samples Queried per Round")
-    ax.grid(True, axis='y', linestyle=':', alpha=0.6)
-    ax.legend()
-    if len(results_df["round"].unique()) == len(results_df["round"]):
-        ax.set_xticks(results_df["round"])
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-
-    # --- 4. Total LF samples vs. Cumulative Cost ---
-    ax = axs[1, 1]
-    ax.plot(results_df["cumulative_cost"], results_df["total_lf_samples"], marker='s', linestyle=':', color='teal',
-            mec='darkcyan', label='Total LF')
-    ax.set_xlabel("Cumulative Cost")
-    ax.set_ylabel("Total Number of Samples")
-    ax.set_title("Total LF Samples vs. Cumulative Cost")
-    ax.grid(True, linestyle=':', alpha=0.6)
-    ax.legend()
-
-    # --- 5. Total HF samples vs. Cumulative Cost ---
-    ax = axs[2, 0]
-    ax.plot(results_df["cumulative_cost"], results_df["total_hf_samples"], marker='^', linestyle=':',
-            color='mediumpurple', mec='indigo', label='Total HF')
-    ax.set_xlabel("Cumulative Cost")
-    ax.set_ylabel("Total Number of Samples")
-    ax.set_title("Total HF Samples vs. Cumulative Cost")
-    ax.grid(True, linestyle=':', alpha=0.6)
-    ax.legend()
-
-    # --- 6. Cumulative Cost vs. Round (Sanity check / alternative view) ---
-    ax = axs[2, 1]
-    ax.plot(results_df["round"], results_df["cumulative_cost"], marker='x', linestyle='-', color='forestgreen',
-            mec='darkgreen')
-    ax.set_xlabel("Active Learning Round")
-    ax.set_ylabel("Cumulative Cost")
-    ax.set_title("Cumulative Cost Progression")
-    ax.grid(True, linestyle=':', alpha=0.6)
-    if len(results_df["round"].unique()) == len(results_df["round"]):
-        ax.set_xticks(results_df["round"])
-
-    # Improve overall aesthetics slightly for all subplots
-    for i in range(axs.shape[0]):
-        for j in range(axs.shape[1]):
-            axs[i, j].tick_params(axis='both', which='major', labelsize=9)
-            axs[i, j].title.set_fontsize(12)
-            axs[i, j].xaxis.label.set_fontsize(10)
-            axs[i, j].yaxis.label.set_fontsize(10)
-            if axs[i, j].get_legend() is not None:
-                axs[i, j].legend(fontsize=9)
 
     # Adjust layout
     plt.tight_layout(rect=[0, 0, 1, 0.97])  # rect to make space for suptitle

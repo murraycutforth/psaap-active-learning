@@ -10,6 +10,7 @@ from src.batch_al_strategies.random_strategy import RandomStrategy
 from src.batch_al_strategies.mutual_information_strategy_bmfal import MutualInformationBMFALStrategy
 from src.batch_al_strategies.mutual_information_strategy_grid_latents import MutualInformationGridStrategy
 from src.batch_al_strategies.mutual_information_strategy_grid_observables import MutualInformationGridStrategyObservables
+from src.batch_al_strategies.max_uncertainty_diversity import MaxUncertaintyStrategy
 from src.toy_example import create_smooth_change_linear, create_smooth_change_nonlinear
 
 logging.basicConfig(level=logging.INFO)
@@ -32,28 +33,30 @@ def sampling_function_H(X_normalized):
 def main():
     seed = 42
 
-    inducing_points = pyDOE.lhs(2, 256, criterion='maximin', iterations=10)
-    model = BFGPC_ELBO(train_x_lf=torch.tensor(inducing_points).float(), train_x_hf=torch.tensor(inducing_points).float())
+    model = BFGPC_ELBO()
 
     dataset = BiFidelityDataset(sample_LF=sampling_function_L, sample_HF=sampling_function_H,
                                 true_p_LF=p_LF_toy, true_p_HF=p_HF_toy,
-                                name='Toy', c_LF=0.5, c_HF=1.0)
+                                name='ToyLinear', c_LF=0.1, c_HF=1.0)
 
-    # strategy = RandomStrategy(model=model, dataset=dataset, seed=seed)
-    strategy = MutualInformationBMFALStrategy(model=model, dataset=dataset, seed=seed, N_MC=50)
-    # strategy = MutualInformationGridStrategy(model=model, dataset=dataset, seed=seed, N_MC=50)
-    #strategy = MutualInformationGridStrategyObservables(model, dataset, seed=seed)
+    strategy = RandomStrategy(model=model, dataset=dataset, seed=seed)
+    # strategy = MutualInformationBMFALStrategy(model=model, dataset=dataset, seed=seed, N_MC=100, plot_all_scores=True)
+    # strategy = MutualInformationGridStrategy(model=model, dataset=dataset, seed=seed, plot_all_scores=True, max_pool_subset=50)
+    # strategy = MutualInformationGridStrategyObservables(model, dataset, seed=seed, plot_all_scores=True, N_y_samples=100)
+    # strategy = MaxUncertaintyStrategy(model=model, dataset=dataset, beta=0.5, gamma=0.5, plot_all_scores=True)
 
-    config = ALExperimentConfig(
-        N_L_init=1000,
-        N_H_init=1000,
-        cost_constraints=[20, 20, 20],
-        N_cand_LF=250,
-        N_cand_HF=250,
-        train_epochs=1500,
+    base_config = ALExperimentConfig(
+        N_L_init=500,
+        N_H_init=50,
+        cost_constraints=[100, 100, 100, 100, 100],
+        N_cand_LF=500,
+        N_cand_HF=500,
+        train_epochs=500,
+        train_lr=0.1,
+        N_reps=5,
     )
 
-    experiment = ALExperimentRunner(model, dataset, strategy, config)
+    experiment = ALExperimentRunner(model, dataset, strategy, base_config)
     experiment.run_experiment()
 
 

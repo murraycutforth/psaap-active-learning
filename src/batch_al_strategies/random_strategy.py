@@ -1,33 +1,38 @@
 import numpy as np
 
 from src.batch_al_strategies.base import BiFidelityBatchALStrategy
-from src.active_learning.util_classes import BiFidelityModel, BiFidelityDataset
+from src.active_learning.util_classes import BiFidelityModel, BiFidelityDataset, ALExperimentConfig
 
 
 class RandomStrategy(BiFidelityBatchALStrategy):
     """Baseline active learning strategy, randomly pick a fidelity and input coord until budget exhausted
     """
-    def __init__(self, model: BiFidelityModel, dataset: BiFidelityDataset, seed=42):
+    def __init__(self, model: BiFidelityModel, dataset: BiFidelityDataset, seed=42, gamma=0.5):
         super().__init__(model, dataset)
         self.gen = np.random.default_rng(seed=seed)
+        self.gamma = gamma
+        assert 0.0 <= gamma <= 1.0
         assert dataset.c_HF > 0
         assert dataset.c_LF > 0
 
     def select_batch(self,
-                     X_LF_cand_pool: np.ndarray,
-                     X_HF_cand_pool: np.ndarray,
+                     config: ALExperimentConfig,
                      current_model_trained: BiFidelityModel,  # Pass the currently trained model
                      budget_this_step: float
-                     ) -> tuple[list[int], list[int]]:  # LF indices from X_LF_cand_pool, HF indices from X_HF_cand_pool
+                     ) -> tuple[np.ndarray, np.ndarray]:
+
+        X_LF_cand_pool = self._generate_lhs_samples(config, config.N_cand_LF)
+        X_HF_cand_pool = self._generate_lhs_samples(config, config.N_cand_HF)
+
         inds_LF = []
         inds_HF = []
         cost_so_far = 0
 
         while True:
 
-            # Randomly choose a fidelity, such that on average equal resources are devoted to each fidelity
+            # Randomly choose a fidelity, such that on average of gamma resources are devoted to HF
             x = self.gen.random()
-            use_LF = x < self.dataset.c_HF / (self.dataset.c_HF + self.dataset.c_LF)
+            use_LF = x < ((1.0 - self.gamma) * self.dataset.c_HF) / (self.dataset.c_HF + self.gamma * (self.dataset.c_LF - self.dataset.c_HF))
 
             if use_LF:
                 # Add LF to pool
@@ -43,7 +48,10 @@ class RandomStrategy(BiFidelityBatchALStrategy):
             if cost_so_far > budget_this_step:
                 break
 
-        return inds_LF, inds_HF
+        X_LF_new = X_LF_cand_pool[inds_LF]
+        X_HF_new = X_HF_cand_pool[inds_HF]
+
+        return X_LF_new, X_HF_new
 
     def __str__(self):
-        return 'RandomStrategy'
+        return f'RandomStrategy(gamma={self.gamma:.4f})'

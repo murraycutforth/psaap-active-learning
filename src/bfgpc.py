@@ -11,9 +11,11 @@
 """
 import logging
 
+import pyDOE
 import torch
 import numpy as np
 import gpytorch
+from matplotlib import pyplot as plt
 from pyDOE import lhs
 
 from src.utils_plotting import plot_bfgpc_predictions, plot_bf_training_data
@@ -28,7 +30,7 @@ class GP_Submodel(gpytorch.models.ApproximateGP):
         Note: The VariationalDistribution object holds the trainable params of the approximate posterior
         """
         var_dist = gpytorch.variational.CholeskyVariationalDistribution(train_x.size(0))
-        var_strat = gpytorch.variational.VariationalStrategy(self, train_x, var_dist, learn_inducing_locations=False)
+        var_strat = gpytorch.variational.VariationalStrategy(self, train_x, var_dist, learn_inducing_locations=True)
         super().__init__(var_strat)
 
         self.mean_module = gpytorch.means.ConstantMean()
@@ -43,13 +45,12 @@ class GP_Submodel(gpytorch.models.ApproximateGP):
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
 
-def _assemble_T(N_H, N_L, N_f_L_unique, N_f_delta_unique, N_prime, inverse_indices_L, inverse_indices_delta,
-                rho_val):
+def _assemble_T(N_H, N_L, N_f_L_unique, N_f_delta, N_prime, inverse_indices_L, rho_val):
     """T maps G, the distribution (f_L(X_L_unique_eval), delta(X_delta_unique_eval))^T to the target distribution
     This is used for BFGPC_ELBO.predict_multi_fidelity_latent_joint()
     """
     T_shape_rows = N_L + N_H + N_prime
-    T_shape_cols = N_f_L_unique + N_f_delta_unique
+    T_shape_cols = N_f_L_unique + N_f_delta
 
     # Handle cases where T might be empty or have zero columns/rows
     if T_shape_rows == 0 or T_shape_cols == 0:
@@ -74,13 +75,11 @@ def _assemble_T(N_H, N_L, N_f_L_unique, N_f_delta_unique, N_prime, inverse_indic
         # For X_H points, their f_L components start after X_L points in inverse_indices_L.
         i_nonunique_f_L = inverse_indices_L[N_L + j]
 
-        # inverse_indices_delta maps X_H and X_prime points to unique delta indices.
         # The first N_H entries are for X_H.
-        # These indices ALREADY point to the correct columns in T (i.e., offset by N_f_L_unique).
-        i_nonunique_delta = inverse_indices_delta[j]
+        i_delta = N_f_L_unique + j
 
         T[row_idx_in_T, i_nonunique_f_L] = rho_val
-        T[row_idx_in_T, i_nonunique_delta] = 1.0  # Assuming i_nonunique_delta is already offset
+        T[row_idx_in_T, i_delta] = 1.0
 
     # Block 3: N_prime rows
     # T[row_idx, col_for_f_L] = rho_val
@@ -94,17 +93,27 @@ def _assemble_T(N_H, N_L, N_f_L_unique, N_f_delta_unique, N_prime, inverse_indic
 
         # The entries for X_prime in inverse_indices_delta start after X_H entries.
         # These indices ALREADY point to the correct columns in T (i.e., offset by N_f_L_unique).
-        i_nonunique_delta = inverse_indices_delta[N_H + j]
+        i_delta = N_f_L_unique + N_H + j
 
         T[row_idx_in_T, i_nonunique_f_L] = rho_val
-        T[row_idx_in_T, i_nonunique_delta] = 1.0  # Assuming i_nonunique_delta is already offset
+        T[row_idx_in_T, i_delta] = 1.0
+
+    # Check T has no identical rows (which would cause degeneracy)
+    assert len(torch.unique(T, dim=0)) == len(T)
 
     return T
 
 
 class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
-    def __init__(self, train_x_lf, train_x_hf, initial_rho=1.0):
+    def __init__(self, train_x_lf=None, train_x_hf=None, initial_rho=1.0):
         super().__init__()
+
+        if train_x_lf is None:
+           train_x_lf = torch.tensor(pyDOE.lhs(2, 128, criterion='maximin', iterations=10)).float()
+
+        if train_x_hf is None:
+            train_x_hf = torch.tensor(pyDOE.lhs(2, 128, criterion='maximin', iterations=10)).float()
+
         self.lf_model = GP_Submodel(train_x_lf)
         self.delta_model = GP_Submodel(train_x_hf)
 
@@ -214,6 +223,32 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
 
         return predictive_probs_hf
 
+    def predict_prob_mean(self, x_predict):
+        return self.forward(x_predict).detach().numpy()
+
+    def predict_prob_var(self, x_predict):
+        self.eval()
+
+        if not torch.is_tensor(x_predict):
+            x_predict = torch.tensor(x_predict).float()
+
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            q_f_l_at_xpredict = self.lf_model(x_predict)
+            q_f_delta_at_xpredict = self.delta_model(x_predict)
+
+            mean_fh_predict = self.rho * q_f_l_at_xpredict.mean + q_f_delta_at_xpredict.mean
+            var_fh_predict = (self.rho.pow(2)) * q_f_l_at_xpredict.variance + q_f_delta_at_xpredict.variance
+
+            q_f_h_predict = gpytorch.distributions.MultivariateNormal(mean_fh_predict,
+                                                                      torch.diag_embed(var_fh_predict))
+
+            n_samples = 10
+            q_samples = q_f_h_predict.sample(torch.Size((n_samples,)))  # Shape (n_samples, len(x_predict))
+            output_probs = gpytorch.distributions.base_distributions.Normal(0, 1).cdf(q_samples)
+
+        return output_probs.var(dim=0).detach().numpy()
+
+
     def predict_lf(self, x_predict):
         """
         Predicts P(Y_L=1 | x_eval)
@@ -266,7 +301,7 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
         Predicts joint distribution of latent f_L at X_L and f_H at X_H and X_prime.
         Used to compute mutual information between multifidelity proposal set and HF latent.
 
-        Note: this is quite subtle, but if there is overlap between X_L, X_H and X_prime then
+        Note: this is quite subtle, but if there is overlap between X_H and X_prime then
         the current method which looks at unique subsets of these points will result in a matrix T
         which has identical (linearly dependent) rows, and as a result the final covariance matrix
         is not positive definite.
@@ -279,6 +314,11 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
         assert X_L.dtype == torch.float32
         assert X_H.dtype == torch.float32
         assert X_prime.dtype == torch.float32
+
+        # There cannot be identical points in X_H and X_prime otherwise the resulting distribution will be degenerate
+        X_H_and_prime = torch.cat((X_H, X_prime), dim=0)
+        uniqueness_test = torch.unique(X_H_and_prime, dim=0)
+        assert uniqueness_test.shape[0] == X_H_and_prime.shape[0], f"{X_H_and_prime.shape[0]} != {uniqueness_test.shape[0]}, X_H shape = {X_H.shape}, X_prime shape = {X_prime.shape}"
 
         self.eval()
 
@@ -310,16 +350,14 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
             # inverse_indices_L now maps each point in all_L_points back to its row in X_L_unique_eval
 
             all_delta_points = torch.cat([X_H, X_prime], dim=0)
-            X_delta_unique_eval, inverse_indices_delta = torch.unique(all_delta_points, dim=0, return_inverse=True)
-            N_f_delta_unique = X_delta_unique_eval.shape[0]
+            N_f_delta = all_delta_points.shape[0]
 
             # The linear transformation T maps the distribution G to the target distribution
-            T = _assemble_T(N_H, N_L, N_f_L_unique, N_f_delta_unique, N_prime, inverse_indices_L, inverse_indices_delta,
-                            rho_val)
+            T = _assemble_T(N_H, N_L, N_f_L_unique, N_f_delta, N_prime, inverse_indices_L, rho_val)
 
             # These are the approximate predictive posteriors for f_L and delta
             q_f_l_at_xpredict = self.lf_model(X_L_unique_eval)
-            q_f_delta_at_xpredict = self.delta_model(X_delta_unique_eval)
+            q_f_delta_at_xpredict = self.delta_model(all_delta_points)
 
             # Parameters of Gaussian joint distribution G (f_L and delta are independent GPs)
             mu_G = torch.cat([q_f_l_at_xpredict.mean, q_f_delta_at_xpredict.mean], dim=0)
@@ -337,7 +375,15 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
             #    logger.error(f"Min eigenval intermediate: {torch.min(eigenvals_intermediate)}")
             #    logger.error(f"Min eigenval final: {torch.min(eigenvals_final)}")
 
-            return gpytorch.distributions.MultivariateNormal(f_target_mu, f_target_sigma, validate_args=True)
+            try:
+                return gpytorch.distributions.MultivariateNormal(f_target_mu, f_target_sigma, validate_args=True)
+            except ValueError:
+                logger.critical("Non positive definite covariance matrix (probably)")
+                plt.imshow(f_target_sigma)
+                plt.colorbar()
+                plt.show()
+                f_target_sigma += 1e-3 * torch.eye(K_intermediate.shape[0])
+                return gpytorch.distributions.MultivariateNormal(f_target_mu, f_target_sigma, validate_args=True)
 
     def train_model(self, X_LF, Y_LF, X_HF, Y_HF, lr=0.01, n_epochs=1000):
         """Also confusingly referred to as the inference step in the GP literature.
@@ -347,10 +393,14 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
         which are located at the inducing points specified in the submodels for f_L and delta have GP priors and
         approximate posteriors. This approach is known as empirical Bayes.
         """
-        X_LF = torch.tensor(X_LF).float()
-        Y_LF = torch.tensor(Y_LF).float()
-        X_HF = torch.tensor(X_HF).float()
-        Y_HF = torch.tensor(Y_HF).float()
+        if not torch.is_tensor(X_LF):
+            X_LF = torch.tensor(X_LF).float()
+        if not torch.is_tensor(Y_LF):
+            Y_LF = torch.tensor(Y_LF).float()
+        if not torch.is_tensor(X_HF):
+            X_HF = torch.tensor(X_HF).float()
+        if not torch.is_tensor(Y_HF):
+            Y_HF = torch.tensor(Y_HF).float()
 
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
 

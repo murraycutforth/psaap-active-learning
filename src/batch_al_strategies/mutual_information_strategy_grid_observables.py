@@ -17,9 +17,12 @@ class MutualInformationGridStrategyObservables(MutualInformationGridStrategy):
     This class modifies the mutual information approach as follows.
 
     - We now estimate the MI between the subsets of the Bernoulli outcomes (not the latents)
+    - N_MC is not used (N_cand_LF used to set number of grid samples)
+    - N_y_samples is the number of Bernoulli samples used in discrete MI estimate
+    - Unlike sampling the latents, we want to be able to decide to sample more than once at a given candidate loc
     """
-    def __init__(self, model: BiFidelityModel, dataset: BiFidelityDataset, seed=42, N_MC=100, N_y_samples=42):
-        super().__init__(model, dataset, seed, N_MC)
+    def __init__(self, model: BiFidelityModel, dataset: BiFidelityDataset, seed=42, max_pool_subset=50, N_y_samples=50, plot_all_scores=True):
+        super().__init__(model, dataset, seed, max_pool_subset, plot_all_scores)
         self.N_y_samples = N_y_samples
 
     def __str__(self):
@@ -128,4 +131,105 @@ class MutualInformationGridStrategyObservables(MutualInformationGridStrategy):
         # MI should be non-negative, but numerical errors in MC estimation
         # can sometimes lead to small negative values.
         return max(0.0, mi)
+
+    def _max_greedy_acquisition(self, X_G, inds_LF, inds_HF, model, flags, plot=False):
+        """Compute acqusition function for each fidelity and each candidate position and return the max
+        """
+        assert flags.any()
+
+        plot_data = {
+            'X_LF': [],
+            'X_HF': [],
+            'MI_LF': [],
+            'MI_HF': []
+        }
+
+        # Evaluate on HF at these points - grid points which have not been selected yet
+        eval_inds = set(range(len(X_G))).difference(set(inds_LF).union(set(inds_HF)))
+
+        @dataclasses.dataclass
+        class Optimum:
+            fidelity: int
+            mi: float
+            cand_ind: int
+
+        optimum = Optimum(-1, -np.inf, -1)  # (Fidelity, MI)
+
+        X_HF_candidates, X_HF_cand_ind_map, X_LF_candidates, X_LF_cand_ind_map, current_proposals = self.assemble_current_proposals(
+            X_G, inds_HF, inds_LF)
+
+        X_prime = torch.from_numpy(X_G[list(eval_inds)]).float()
+        base_mi = self._estimate_MI(current_proposals, model, X_prime)
+
+        logger.info(f"Number of current proposals: {len(current_proposals)}")
+        logger.info(f"Number of X_LF_candidates: {len(X_LF_candidates)}")
+        logger.info(f"Number of X_HF_candidates: {len(X_HF_candidates)}")
+        logger.info(f"Base MI: {base_mi}")
+
+        if flags[0]:
+            # Check all LF candidate points
+            # For efficiency, just check a random subset of 50 points if there are more proposals than that
+            if len(X_LF_candidates) > self.max_pool_subset:
+                inds = np.random.choice(range(len(X_LF_candidates)), self.max_pool_subset, replace=False)
+            else:
+                inds = range(len(X_LF_candidates))
+
+            for i in inds:
+                x = X_LF_candidates[i]
+                new_x_prime_inds = eval_inds.difference({X_LF_cand_ind_map[i]})
+                X_prime = torch.from_numpy(X_G[list(new_x_prime_inds)]).float()
+                mi = self._estimate_MI(current_proposals + [(0, x)], model, X_prime)
+                cost_weighted_delta_mi = (mi - base_mi) / self.dataset.c_LF
+
+                plot_data['X_LF'].append(x)
+                plot_data['MI_LF'].append(cost_weighted_delta_mi)
+
+                if cost_weighted_delta_mi > optimum.mi:
+                    optimum.mi = cost_weighted_delta_mi
+                    optimum.fidelity = 0
+                    optimum.cand_ind = X_LF_cand_ind_map[i]
+
+                logger.debug(f"LF loop. X_prime.shape={X_prime.shape}, len(current_proposals)={len(current_proposals)}")
+                logger.debug(f"LF: {x}, MI={mi:.4f}, WDMI={cost_weighted_delta_mi:.4f}")
+
+        if flags[1]:
+            if len(X_HF_candidates) > self.max_pool_subset:
+                inds = np.random.choice(range(len(X_HF_candidates)), self.max_pool_subset, replace=False)
+            else:
+                inds = range(len(X_HF_candidates))
+
+            for i in inds:
+                x = X_HF_candidates[i]
+                new_x_prime_inds = eval_inds.difference({X_HF_cand_ind_map[i]})
+                X_prime = torch.from_numpy(X_G[list(new_x_prime_inds)]).float()
+                mi = self._estimate_MI(current_proposals + [(1, x)], model, X_prime)
+                cost_weighted_delta_mi = (mi - base_mi) / self.dataset.c_HF
+
+                plot_data['X_HF'].append(x)
+                plot_data['MI_HF'].append(cost_weighted_delta_mi)
+
+                if cost_weighted_delta_mi > optimum.mi:
+                    optimum.mi = cost_weighted_delta_mi
+                    optimum.fidelity = 1
+                    optimum.cand_ind = X_HF_cand_ind_map[i]
+
+                logger.debug(f"HF loop. X_prime.shape={X_prime.shape}, len(current_proposals)={len(current_proposals)}")
+                logger.debug(f"HF: {x}, MI={mi:.4f}, WDMI={cost_weighted_delta_mi:.4f}")
+
+        logger.info(f"Greedy solve completed, optimum: ({optimum.fidelity},{optimum.cand_ind}) MI={optimum.mi:.4f}")
+
+        if plot:
+            #X_prime = X_G[list(eval_inds)]
+            #plt.scatter(X_prime[:, 0], X_prime[:, 1], c='blue')
+            #X_LF = X_G[inds_LF]
+            #plt.scatter(X_LF[:, 0], X_LF[:, 1], c='red', marker='x')
+            #X_HF = X_G[inds_HF]
+            #plt.scatter(X_HF[:, 0], X_HF[:, 1], c='green', marker='*')
+            #plt.title(f"{len(X_HF)}, {len(X_LF)}")
+            #plt.show()
+            self._plot_all_scores(plot_data)
+
+        assert optimum.cand_ind >= 0
+
+        return optimum.fidelity, optimum.cand_ind
 

@@ -29,6 +29,14 @@ class BiFidelityModel(ABC):
     def predict_multi_fidelity_latent_joint(self, X_L: torch.tensor, X_H: torch.tensor, X_prime: torch.tensor):
         pass
 
+    @abstractmethod
+    def predict_prob_mean(self, x_predict):
+        pass
+
+    @abstractmethod
+    def predict_prob_var(self, x_predict):
+        pass
+
 
 @dataclass
 class BiFidelityDataset():
@@ -55,6 +63,7 @@ class ALExperimentConfig:
     train_lr: float = 0.01
     train_epochs: int = 500
     random_seed: Optional[int] = None
+    N_reps: int = 5
 
     def __post_init__(self):
         if not self.cost_constraints:
