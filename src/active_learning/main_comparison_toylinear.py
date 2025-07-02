@@ -42,17 +42,17 @@ def main():
     base_config = ALExperimentConfig(
         N_L_init=500,
         N_H_init=50,
-        cost_constraints=[20] * 10,
-        N_cand_LF=500,
+        cost_constraints=[100] * 5,
+        N_cand_LF=2000,
         N_cand_HF=500,
-        train_epochs=250,
+        train_epochs=100,
         train_lr=0.1,
         N_reps=5,
     )
 
     strategies = [
-        RandomStrategy(model=model, dataset=dataset, seed=seed, gamma=0.5),
-        MaxUncertaintyStrategy(model=model, dataset=dataset, beta=0.5, gamma=0.5, plot_all_scores=False),
+        #RandomStrategy(model=model, dataset=dataset, seed=seed, gamma=0.5),
+        #MaxUncertaintyStrategy(model=model, dataset=dataset, beta=0.5, gamma=0.5, plot_all_scores=False),
         MutualInformationGridStrategy(model=model, dataset=dataset, seed=seed, plot_all_scores=False, max_pool_subset=50),
     ]
 

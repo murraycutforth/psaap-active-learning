@@ -105,7 +105,7 @@ def _assemble_T(N_H, N_L, N_f_L_unique, N_f_delta, N_prime, inverse_indices_L, r
 
 
 class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
-    def __init__(self, train_x_lf=None, train_x_hf=None, initial_rho=1.0):
+    def __init__(self, train_x_lf=None, train_x_hf=None, initial_rho=1.0, l2_reg_lambda=0.01):
         super().__init__()
 
         if train_x_lf is None:
@@ -119,6 +119,9 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
 
         # Rho: scaling parameter, learned during training
         self.rho = torch.nn.Parameter(torch.tensor([initial_rho]))
+
+        # L2 regularisation applied to
+        self.l2_reg_lambda = l2_reg_lambda
 
         # Likelihoods for classification (maps latent GP to binary probability)
         self.lf_likelihood = gpytorch.likelihoods.BernoulliLikelihood()
@@ -165,18 +168,47 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
         """
         q_f_l_at_xl, q_f_h_at_xh, kl_lf, kl_delta = self._calculate_elbo_terms(x_l, y_l, x_h, y_h)
 
+        # Get total number of data points and use this to normalize ELBO
+        num_lf_data = y_l.size(0)
+        num_hf_data = y_h.size(0)
+        num_total_data = num_lf_data + num_hf_data
+
         # Expected log likelihood terms (using Bernoulli likelihoods)
         # E_q[log p(y_L | f_L(X_L))]
         expected_log_prob_lf = self.lf_likelihood.expected_log_prob(y_l, q_f_l_at_xl).sum()
         # E_q[log p(y_H | f_H(X_H))]
         expected_log_prob_hf = self.hf_likelihood.expected_log_prob(y_h, q_f_h_at_xh).sum()
 
+        avg_expected_log_prob = expected_log_prob_lf + expected_log_prob_hf
+
         # Sum of KL divergences
         total_kl_divergence = kl_lf + kl_delta
 
         # ELBO
-        elbo = expected_log_prob_lf + expected_log_prob_hf - total_kl_divergence
-        return -elbo  # Return negative ELBO for minimization
+        neg_elbo = - avg_expected_log_prob + total_kl_divergence
+
+        # Regularization of kernel hyperparams (length_scale and output_scale)
+        # Note: one issue with this approach is that the ELBO depends on the
+        l2_reg = torch.tensor(0.)
+        prior_val = 1.0
+        if self.l2_reg_lambda > 0:
+            lengthscale_lf = self.lf_model.covar_module.base_kernel.lengthscale
+            l2_reg += (lengthscale_lf - prior_val * torch.ones_like(lengthscale_lf)).pow(2).sum()
+
+            outputscale_lf = self.lf_model.covar_module.outputscale
+            l2_reg += (outputscale_lf - prior_val * torch.ones_like(outputscale_lf)).pow(2).sum()
+
+            lengthscale_delta = self.delta_model.covar_module.base_kernel.lengthscale
+            l2_reg += (lengthscale_delta - prior_val * torch.ones_like(lengthscale_delta)).pow(2).sum()
+
+            outputscale_delta = self.delta_model.covar_module.outputscale
+            l2_reg += (outputscale_delta - prior_val * torch.ones_like(outputscale_delta)).pow(2).sum()
+
+            l2_reg *= self.l2_reg_lambda
+
+        # print(neg_elbo, l2_reg)
+
+        return neg_elbo + l2_reg
 
     def forward(self, x_predict):
         """
@@ -406,21 +438,21 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
 
         self.train()
 
-        print("Starting training...")
+        logger.debug("Starting training...")
         for epoch in range(n_epochs):
             optimizer.zero_grad()
             loss = self._calculate_loss(X_LF, Y_LF, X_HF, Y_HF)
             loss.backward()
             optimizer.step()
             if (epoch + 1) % (n_epochs // 10) == 0:
-                print(f"Epoch {epoch + 1}/{n_epochs}, Loss: {loss.item():.4f}")
-                print(f"  Rho: {self.rho.item():.4f}")
-                print(f"  LF model lengthscale: {self.lf_model.covar_module.base_kernel.lengthscale.item():.4f}, "
-                      f"outputscale: {self.lf_model.covar_module.outputscale.item():.4f}")
-                print(f"  Delta model lengthscale: {self.delta_model.covar_module.base_kernel.lengthscale.item():.4f}, "
+                logger.debug(f"Epoch {epoch + 1}/{n_epochs}, Loss: {loss.item():.4f}")
+                logger.debug(f"  Rho: {self.rho.item():.4f}")
+                logger.debug(f"  LF model lengthscale: {self.lf_model.covar_module.base_kernel.lengthscale.item():.4f}, "
+                            f"outputscale: {self.lf_model.covar_module.outputscale.item():.4f}")
+                logger.debug(f"  Delta model lengthscale: {self.delta_model.covar_module.base_kernel.lengthscale.item():.4f}, "
                       f"outputscale: {self.delta_model.covar_module.outputscale.item():.4f}")
 
-        print("Training finished.")
+        logger.debug("Training finished.")
 
     def evaluate_elpp(self, X_HF_test: np.ndarray, Y_HF_test: np.ndarray):
         """The expected log predictive probability is a standard metric in the VI literature.
@@ -445,7 +477,7 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
             test_elp = self.hf_likelihood.expected_log_prob(Y_HF_test, q_f_h_predict)
             sum_test_elp = test_elp.sum().numpy().item()
 
-        return sum_test_elp
+        return sum_test_elp / len(Y_HF_test)
 
     def evaluate_accuracy(self, X_HF_test, Y_HF_test):
         """If we have a classification problem (rather than probability estimation).

@@ -55,19 +55,17 @@ class ALExperimentConfig:
     """Settings for initialising a bi fidelity batch active learning experiment"""
     N_L_init: int
     N_H_init: int
-    cost_constraints: list[float]
-    N_cand_LF: int
-    N_cand_HF: int
+    cost_constraints: list[float] = field(default_factory=lambda: [])
+    N_cand_LF: int = 500
+    N_cand_HF: int = 500
     domain_bounds: list[tuple[float, float]] = field(default_factory=lambda: [(0, 1), (0, 1)])
-    N_test: int = 1000
+    N_test: int = 10_000
     train_lr: float = 0.01
     train_epochs: int = 500
     random_seed: Optional[int] = None
     N_reps: int = 5
 
     def __post_init__(self):
-        if not self.cost_constraints:
-            raise ValueError("cost_constraints list cannot be empty.")
         if any(self.cost_constraints[i] > self.cost_constraints[i + 1] for i in range(len(self.cost_constraints) - 1)):
             logging.warning(
                 "cost_constraints are not monotonically increasing. This might lead to unexpected behavior.")

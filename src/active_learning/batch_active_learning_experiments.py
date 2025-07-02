@@ -28,8 +28,8 @@ class ALExperimentRunner():
         if self.config.random_seed is not None:
             np.random.seed(self.config.random_seed)
 
-        self.outdir = get_project_root() / "output" / f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.dataset.name}_{self.strategy_name_str}"
-        self.outdir.mkdir()
+        self.outdir = get_project_root() / "output" / "active_learning" / f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.dataset.name}_{self.strategy_name_str}"
+        self.outdir.mkdir(parents=True)
 
         # Setup logging
         self.logger = logging.getLogger(f"{__name__}")

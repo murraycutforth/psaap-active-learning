@@ -212,11 +212,13 @@ def plot_bfgpc_predictions_two_axes(model, grid_res=100, X_LF=None, Y_LF=None, X
 
 
 def plot_bf_training_data(X_LF, Y_LF, X_HF, Y_HF, boundary_LF=None, boundary_HF=None, outpath=None):
-    plt.figure(figsize=(8, 6))
-    plt.scatter(X_LF[:, 0], X_LF[:, 1], c=Y_LF, cmap='viridis', marker='s', s=30,
-                alpha=0.3, label='Low-fidelity Data')
-    plt.scatter(X_HF[:, 0], X_HF[:, 1], c=Y_HF, cmap='viridis', marker='o', s=100,
-                edgecolors='k', label='High-fidelity Data')
+    fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(8, 3), dpi=200)
+
+    axs[0].scatter(X_LF[:, 0], X_LF[:, 1], c=Y_LF, cmap='viridis', marker='s', s=30,
+                alpha=0.5, label='Low-fidelity Data')
+    axs[1].scatter(X_HF[:, 0], X_HF[:, 1], c=Y_HF, cmap='viridis', marker='o', s=30,
+                edgecolors='k', label='High-fidelity Data', alpha=0.5)
+
     x_boundary_plot = np.linspace(0, 1, 200)
 
     if boundary_LF is not None:
@@ -225,11 +227,12 @@ def plot_bf_training_data(X_LF, Y_LF, X_HF, Y_HF, boundary_LF=None, boundary_HF=
         plt.plot(x_boundary_plot, y_boundary_l_plot.squeeze(), 'b--', label='True LF Boundary')
         plt.plot(x_boundary_plot, y_boundary_h_plot.squeeze(), 'r--', label='True HF Boundary')
 
-    plt.xlabel('X1')
-    plt.ylabel('X2')
-    plt.legend()
-    plt.xlim(0, 1)
-    plt.ylim(0, 1)
+    for ax in axs:
+        ax.set_aspect('equal', adjustable='box')
+        ax.set_xlabel('$x1$')
+        ax.set_ylabel('$x2$')
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
 
     if outpath is not None:
         plt.savefig(outpath)

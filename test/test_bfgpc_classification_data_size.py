@@ -1,16 +1,14 @@
 # test_mfgp_classifier_sweep.py
 import unittest
 from pathlib import Path
-import os
 import time
 
 import numpy as np
 import torch
 from pyDOE import lhs
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 
 from src.bfgpc import BFGPC_ELBO
+from src.experiments.main_lf_vs_hf_data_size import plot_heatmap
 
 
 def true_boundary_L_normalized(x_norm_X1):  # x_norm_X1 is N x 1
@@ -29,38 +27,6 @@ def sampling_function_L(X_normalized):  # Expects N x D normalized input
 def sampling_function_H(X_normalized):  # Expects N x D normalized input
     boundary_vals_col = true_boundary_H_normalized(X_normalized[:, 0][:, None])
     return (X_normalized[:, 1] > boundary_vals_col.squeeze()).astype(float)
-
-
-def plot_heatmap(data, title, xlabel, ylabel, xticklabels, yticklabels, figname, cmap="viridis", val_fmt="{x:.2f}"):
-    """Helper function to plot a heatmap."""
-    fig, ax = plt.subplots(figsize=(8, 6))
-    im = ax.imshow(data, cmap=cmap, aspect='auto')
-
-    # Show all ticks and label them with the respective list entries
-    ax.set_xticks(np.arange(len(xticklabels)))
-    ax.set_yticks(np.arange(len(yticklabels)))
-    ax.set_xticklabels(xticklabels)
-    ax.set_yticklabels(yticklabels)
-
-    # Rotate the tick labels and set their alignment.
-    plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
-
-    # Loop over data dimensions and create text annotations.
-    for i in range(len(yticklabels)):
-        for j in range(len(xticklabels)):
-            val = data[i, j]
-            if not np.isnan(val):
-                ax.text(j, i, val_fmt.format(x=val), ha="center", va="center",
-                        color="w" if im.norm(val) < 0.5 else "black")
-
-    ax.set_title(title)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    fig.colorbar(im, ax=ax)
-    fig.tight_layout()
-    plt.savefig(figname)
-    plt.close(fig)
-    print(f"Saved heatmap: {figname}")
 
 
 class TestMFGPClassifierSweep(unittest.TestCase):

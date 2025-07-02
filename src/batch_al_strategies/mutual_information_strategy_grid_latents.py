@@ -4,6 +4,7 @@ import logging
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
+from tqdm import tqdm
 
 from src.active_learning.util_classes import BiFidelityModel, BiFidelityDataset, ALExperimentConfig
 from src.batch_al_strategies.mutual_information_strategy_bmfal import MutualInformationBMFALStrategy
@@ -30,15 +31,19 @@ class MutualInformationGridStrategy(MutualInformationBMFALStrategy):
 
     def select_batch(self,
                      config: ALExperimentConfig,
-                     current_model_trained: BiFidelityModel,  # Pass the currently trained model
+                     current_model_trained: BiFidelityModel,
                      budget_this_step: float
-                     ) -> tuple[np.ndarray, np.ndarray]:  # LF indices from X_LF_cand_pool, HF indices from X_HF_cand_pool
-        """Greedy algorithm to select batch of runs under MI acquisition function
-        """
+                     ) -> tuple[np.ndarray, np.ndarray]:
+        """Greedy algorithm to select batch of runs under MI acquisition function"""
         X_G = self._generate_grid_samples(config)
 
-        inds_LF = []
-        inds_HF = []
+        # --- IMPROVEMENT 1: Efficient candidate management ---
+        # Use a set for O(1) lookups and removals.
+        available_indices = set(range(len(X_G)))
+        current_proposals = []  # List of (fidelity, x) tuples
+
+        inds_LF_global = []
+        inds_HF_global = []
         cost_so_far = 0
         i = 1
         plot_scores = self.plot_all_scores
@@ -49,28 +54,37 @@ class MutualInformationGridStrategy(MutualInformationBMFALStrategy):
             if not flags.any():
                 break
 
-            fidelity, ind = self._max_greedy_acquisition(X_G, inds_LF, inds_HF, current_model_trained, flags, plot=plot_scores)
-            plot_scores = False
+            fidelity, selected_ind = self._max_greedy_acquisition(
+                X_G,
+                available_indices,
+                current_proposals,
+                current_model_trained,
+                flags,
+                plot=plot_scores
+            )
+            #plot_scores = False
 
             assert fidelity in {0, 1}
+            assert selected_ind in available_indices
 
-            if fidelity:  # 1 for HF, 0 for LF
-                assert ind < len(X_G)
+            # Update state based on selection
+            available_indices.remove(selected_ind)
+            x_selected = X_G[selected_ind]
+            current_proposals.append((fidelity, x_selected))
+
+            if fidelity == 1:  # HF
                 cost_so_far += self.dataset.c_HF
-                inds_HF.append(ind)
-            else:
-                assert ind < len(X_G)
+                inds_HF_global.append(selected_ind)
+            else:  # LF
                 cost_so_far += self.dataset.c_LF
-                inds_LF.append(ind)
+                inds_LF_global.append(selected_ind)
 
-            assert len(set(inds_LF)) == len(inds_LF)
-            assert len(set(inds_HF)) == len(inds_HF)
-
-            logger.info(f"Step {i} complete. Cost so far: {cost_so_far:.4f}. Len(inds_LF): {len(inds_LF)}, Len(inds_HF): {len(inds_HF)}")
+            logger.info(
+                f"Step {i} complete. Cost so far: {cost_so_far:.4f}. Len(inds_LF): {len(inds_LF_global)}, Len(inds_HF): {len(inds_HF_global)}")
             i += 1
 
-        X_LF_new = X_G[inds_LF].copy()
-        X_HF_new = X_G[inds_HF].copy()
+        X_LF_new = X_G[inds_LF_global].copy() if inds_LF_global else np.array([]).reshape(0, X_G.shape[1])
+        X_HF_new = X_G[inds_HF_global].copy() if inds_HF_global else np.array([]).reshape(0, X_G.shape[1])
 
         return X_LF_new, X_HF_new
 
@@ -91,9 +105,8 @@ class MutualInformationGridStrategy(MutualInformationBMFALStrategy):
         flags[1] = cost_so_far + c_HF < budget
         return flags
 
-    def _max_greedy_acquisition(self, X_G, inds_LF, inds_HF, model, flags, plot=False):
-        """Compute acqusition function for each fidelity and each candidate position and return the max
-        """
+    def _max_greedy_acquisition(self, X_G_np, available_indices, current_proposals, model, flags, plot=False):
+        """Compute acquisition function for each fidelity and each candidate position and return the max"""
         assert flags.any()
 
         plot_data = {
@@ -103,116 +116,82 @@ class MutualInformationGridStrategy(MutualInformationBMFALStrategy):
             'MI_HF': []
         }
 
-        # Evaluate on HF at these points - grid points which have not been selected yet
-        eval_inds = set(range(len(X_G))).difference(set(inds_LF).union(set(inds_HF)))
+        # --- IMPROVEMENT 2 & 4: Optimize inner loop and use Tensors early ---
+        # Convert to tensor once
+        X_G = torch.from_numpy(X_G_np).float()
+
+        # The set of points for which we evaluate the posterior entropy is X_G \ X_C,
+        # which is precisely the set of available (unevaluated) points.
+        eval_inds_list = list(available_indices)
+        X_pred_base = X_G[eval_inds_list]
+
+        # Create a map from the global index in X_G to the local index in X_pred_base
+        # This allows us to quickly find which row to remove.
+        global_to_local_pred_idx_map = {global_idx: local_idx for local_idx, global_idx in enumerate(eval_inds_list)}
+
+        # Calculate base MI with all available points as the prediction set
+        base_mi = self._estimate_MI(current_proposals, model, X_pred_base)
+
+        logger.debug(f"Number of current proposals: {len(current_proposals)}")
+        logger.debug(f"Number of candidate points: {len(available_indices)}")
+        logger.debug(f"Base MI: {base_mi}")
 
         @dataclasses.dataclass
         class Optimum:
-            fidelity: int
-            mi: float
-            cand_ind: int
+            fidelity: int = -1
+            mi: float = -np.inf
+            cand_ind: int = -1
 
-        optimum = Optimum(-1, -np.inf, -1)  # (Fidelity, MI)
+        optimum = Optimum()
 
-        X_HF_candidates, X_HF_cand_ind_map, X_LF_candidates, X_LF_cand_ind_map, current_proposals = self.assemble_current_proposals(
-            X_G, inds_HF, inds_LF)
+        # --- Determine the pool of candidates to check ---
+        # `available_indices` is now our single source of truth for candidates.
+        if len(available_indices) > self.max_pool_subset:
+            candidate_indices_to_check = np.random.choice(list(available_indices), self.max_pool_subset, replace=False)
+        else:
+            candidate_indices_to_check = list(available_indices)
 
-        X_prime = torch.from_numpy(X_G[list(eval_inds)]).float()
-        base_mi = self._estimate_MI(current_proposals, model, X_prime)
+        for cand_ind in tqdm(candidate_indices_to_check, desc='Checking candidate indices'):
+            x_cand = X_G[cand_ind]
 
-        logger.info(f"Number of current proposals: {len(current_proposals)}")
-        logger.info(f"Number of X_LF_candidates: {len(X_LF_candidates)}")
-        logger.info(f"Number of X_HF_candidates: {len(X_HF_candidates)}")
-        logger.info(f"Base MI: {base_mi}")
+            # Find the local index of the candidate to remove it from X_pred_base
+            local_idx_to_remove = global_to_local_pred_idx_map[cand_ind]
 
-        if flags[0]:
-            # Check all LF candidate points
-            # For efficiency, just check a random subset of 50 points if there are more proposals than that
-            if len(X_LF_candidates) > self.max_pool_subset:
-                inds = np.random.choice(range(len(X_LF_candidates)), self.max_pool_subset, replace=False)
-            else:
-                inds = range(len(X_LF_candidates))
+            # Create new prediction set by removing one row. This is much faster.
+            # Note: This still creates a new tensor. For ultimate speed, _estimate_MI
+            # could be modified to accept indices to ignore.
+            rows_to_keep = torch.arange(X_pred_base.shape[0]) != local_idx_to_remove
+            X_prime_new = X_pred_base[rows_to_keep]
 
-            for i in inds:
-                x = X_LF_candidates[i]
-                new_x_prime_inds = eval_inds.difference({X_LF_cand_ind_map[i]})
-                X_prime = torch.from_numpy(X_G[list(new_x_prime_inds)]).float()
-                mi = self._estimate_MI(current_proposals + [(0, x)], model, X_prime)
-                cost_weighted_delta_mi = (mi - base_mi) / self.dataset.c_LF
-
-                plot_data['X_LF'].append(x)
-                plot_data['MI_LF'].append(cost_weighted_delta_mi)
-
+            # Check LF
+            if flags[0]:
+                mi_lf = self._estimate_MI(current_proposals + [(0, x_cand.numpy())], model, X_prime_new)
+                cost_weighted_delta_mi = (mi_lf - base_mi) / self.dataset.c_LF
                 if cost_weighted_delta_mi > optimum.mi:
                     optimum.mi = cost_weighted_delta_mi
                     optimum.fidelity = 0
-                    optimum.cand_ind = X_LF_cand_ind_map[i]
+                    optimum.cand_ind = cand_ind
 
-                logger.debug(f"LF loop. X_prime.shape={X_prime.shape}, len(current_proposals)={len(current_proposals)}")
-                logger.debug(f"LF: {x}, MI={mi:.4f}, WDMI={cost_weighted_delta_mi:.4f}")
+                plot_data['X_LF'].append(x_cand)
+                plot_data['MI_LF'].append(cost_weighted_delta_mi)
 
-        if flags[1]:
-            if len(X_HF_candidates) > self.max_pool_subset:
-                inds = np.random.choice(range(len(X_HF_candidates)), self.max_pool_subset, replace=False)
-            else:
-                inds = range(len(X_HF_candidates))
-
-            for i in inds:
-                x = X_HF_candidates[i]
-                new_x_prime_inds = eval_inds.difference({X_HF_cand_ind_map[i]})
-                X_prime = torch.from_numpy(X_G[list(new_x_prime_inds)]).float()
-                mi = self._estimate_MI(current_proposals + [(1, x)], model, X_prime)
-                cost_weighted_delta_mi = (mi - base_mi) / self.dataset.c_HF
-
-                plot_data['X_HF'].append(x)
-                plot_data['MI_HF'].append(cost_weighted_delta_mi)
-
+            # Check HF
+            if flags[1]:
+                mi_hf = self._estimate_MI(current_proposals + [(1, x_cand.numpy())], model, X_prime_new)
+                cost_weighted_delta_mi = (mi_hf - base_mi) / self.dataset.c_HF
                 if cost_weighted_delta_mi > optimum.mi:
                     optimum.mi = cost_weighted_delta_mi
                     optimum.fidelity = 1
-                    optimum.cand_ind = X_HF_cand_ind_map[i]
+                    optimum.cand_ind = cand_ind
 
-                logger.debug(f"HF loop. X_prime.shape={X_prime.shape}, len(current_proposals)={len(current_proposals)}")
-                logger.debug(f"HF: {x}, MI={mi:.4f}, WDMI={cost_weighted_delta_mi:.4f}")
+                plot_data['X_HF'].append(x_cand)
+                plot_data['MI_HF'].append(cost_weighted_delta_mi)
 
-        logger.info(f"Greedy solve completed, optimum: ({optimum.fidelity},{optimum.cand_ind}) MI={optimum.mi:.4f}")
+        logger.debug(f"Greedy solve completed, optimum: ({optimum.fidelity},{optimum.cand_ind}) MI={optimum.mi:.4f}")
 
+        # Plotting logic would need slight adaptation if used, but is omitted for brevity.
         if plot:
-            #X_prime = X_G[list(eval_inds)]
-            #plt.scatter(X_prime[:, 0], X_prime[:, 1], c='blue')
-            #X_LF = X_G[inds_LF]
-            #plt.scatter(X_LF[:, 0], X_LF[:, 1], c='red', marker='x')
-            #X_HF = X_G[inds_HF]
-            #plt.scatter(X_HF[:, 0], X_HF[:, 1], c='green', marker='*')
-            #plt.title(f"{len(X_HF)}, {len(X_LF)}")
-            #plt.show()
             self._plot_all_scores(plot_data)
-
         assert optimum.cand_ind >= 0
 
         return optimum.fidelity, optimum.cand_ind
-
-    def assemble_current_proposals(self, X_G, inds_HF, inds_LF):
-        current_proposals = []  # (Fidelity, x) the points which have been picked from X_G
-        X_LF_current = []  # The points in X_G which have not been picked yet
-        X_LF_current_ind_map = []
-        for i in range(len(X_G)):
-            if i in inds_LF:
-                current_proposals.append((0, X_G[i]))
-            else:
-                X_LF_current.append(X_G[i])
-                X_LF_current_ind_map.append(i)
-        X_HF_current = []
-        X_HF_current_ind_map = []
-        for i in range(len(X_G)):
-            if i in inds_HF:
-                current_proposals.append((1, X_G[i]))
-            else:
-                X_HF_current.append((X_G[i]))
-                X_HF_current_ind_map.append(i)
-        return X_HF_current, X_HF_current_ind_map, X_LF_current, X_LF_current_ind_map, current_proposals
-
-
-
-
-

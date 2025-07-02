@@ -39,21 +39,21 @@ def main():
                                 true_p_LF=p_LF_toy, true_p_HF=p_HF_toy,
                                 name='ToyLinear', c_LF=0.1, c_HF=1.0)
 
-    strategy = RandomStrategy(model=model, dataset=dataset, seed=seed)
+    # strategy = RandomStrategy(model=model, dataset=dataset, seed=seed, gamma=0.9)
     # strategy = MutualInformationBMFALStrategy(model=model, dataset=dataset, seed=seed, N_MC=100, plot_all_scores=True)
-    # strategy = MutualInformationGridStrategy(model=model, dataset=dataset, seed=seed, plot_all_scores=True, max_pool_subset=50)
+    strategy = MutualInformationGridStrategy(model=model, dataset=dataset, seed=seed, plot_all_scores=True, max_pool_subset=50)
     # strategy = MutualInformationGridStrategyObservables(model, dataset, seed=seed, plot_all_scores=True, N_y_samples=100)
     # strategy = MaxUncertaintyStrategy(model=model, dataset=dataset, beta=0.5, gamma=0.5, plot_all_scores=True)
 
     base_config = ALExperimentConfig(
         N_L_init=500,
         N_H_init=50,
-        cost_constraints=[100, 100, 100, 100, 100],
-        N_cand_LF=500,
+        cost_constraints=[100] * 5,
+        N_cand_LF=2000,
         N_cand_HF=500,
-        train_epochs=500,
+        train_epochs=100,
         train_lr=0.1,
-        N_reps=5,
+        N_reps=1,
     )
 
     experiment = ALExperimentRunner(model, dataset, strategy, base_config)

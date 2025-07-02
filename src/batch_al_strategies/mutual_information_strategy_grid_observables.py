@@ -1,12 +1,11 @@
 import dataclasses
 import logging
-import math
-from collections import Counter
 
 import numpy as np
 import torch
 
-from src.active_learning.util_classes import BiFidelityModel, BiFidelityDataset, ALExperimentConfig
+from src.active_learning.util_classes import BiFidelityModel, BiFidelityDataset
+from src.batch_al_strategies.entropy_functions import calculate_entropy_from_samples_miller_madow
 from src.batch_al_strategies.mutual_information_strategy_grid_latents import MutualInformationGridStrategy
 
 logger = logging.getLogger(__name__)
@@ -27,53 +26,6 @@ class MutualInformationGridStrategyObservables(MutualInformationGridStrategy):
 
     def __str__(self):
         return "MutualInformationGridStrategyObservables"
-
-    def _calculate_entropy_from_samples(self, samples: torch.Tensor) -> float:
-        """
-        Calculates the empirical entropy H(X) from a set of samples.
-        H(X) = - sum_{x} p(x) log(p(x))
-
-        Args:
-            samples (torch.Tensor): A tensor of shape (n_samples, n_dimensions)
-                                    where each row is a sample.
-
-        Returns:
-            float: The estimated entropy in nats.
-        """
-        if samples.shape[1] == 0:
-            return 0.0
-
-        counts = Counter(map(tuple, samples.tolist()))
-
-        n_total_samples = samples.shape[0]
-        entropy = 0.0
-
-        for count in counts.values():
-            p = count / n_total_samples
-            if p > 0:
-                entropy -= p * math.log(p)  # log is base e (nats)
-
-        return entropy
-
-    def _calculate_entropy_from_samples_miller_madow(self, samples: torch.Tensor) -> float:
-        """
-        Calculates the empirical entropy H(X) from a set of samples with Miller-Madow correction for small sample size
-        """
-        n_samples, n_dim = samples.shape
-        if n_dim == 0 or n_samples == 0:
-            return 0.0
-
-        counts = Counter(map(tuple, samples.tolist()))
-        k_observed = len(counts)
-
-        entropy_ml = 0.0
-        for count in counts.values():
-            p = count / n_samples
-            entropy_ml -= p * math.log(p)
-
-        # Additive bias correction: H_MM = H + (k_observed - 1) / (2 * N)
-        bias_correction = (k_observed - 1) / (2 * n_samples)
-        return entropy_ml + bias_correction
 
     def _estimate_MI(self, proposal_set: list, model: BiFidelityModel, X_prime: torch.Tensor) -> float:
         """MC estimate of MI between outputs at x, and outputs at sampled x'
@@ -121,7 +73,7 @@ class MutualInformationGridStrategyObservables(MutualInformationGridStrategy):
         y_proposal_samples = y_joint_samples[:, :N_proposal]
         y_prime_samples = y_joint_samples[:, N_proposal:]
 
-        entropy_fn = self._calculate_entropy_from_samples_miller_madow
+        entropy_fn = calculate_entropy_from_samples_miller_madow
 
         H_y = entropy_fn(y_proposal_samples)
         H_y_prime = entropy_fn(y_prime_samples)
