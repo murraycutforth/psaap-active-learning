@@ -9,32 +9,14 @@ from matplotlib import colors
 from pyDOE import lhs
 import matplotlib.pyplot as plt
 
-from src.problems.toy_example import create_smooth_change_nonlinear, create_smooth_change_linear
+from src.problems.psaap_example import sample_HF_outcomes, sample_LF_outcomes
 from src.models.bfgpc import BFGPC_ELBO
 from src.paths import get_project_root
 
-#DATASET = 'Toy Nonlinear'
-DATASET = 'Toy Linear'
 
 def main():
-    if DATASET == 'Toy Linear':
-        linear_low_f1, linear_high_f1, p_LF_toy, p_HF_toy = create_smooth_change_linear()
-    elif DATASET == 'Toy Nonlinear':
-        linear_low_f1, linear_high_f1, p_LF_toy, p_HF_toy = create_smooth_change_nonlinear()
-    else:
-        raise ValueError('Unknown dataset')
 
-    def sampling_function_L(X_normalized):  # Expects N x 2 normalized input
-        Y_linear_low_grid, _ = linear_low_f1(X_normalized, reps=1)
-        Y_linear_high_grid = Y_linear_low_grid.mean(axis=0)
-        return Y_linear_high_grid
-
-    def sampling_function_H(X_normalized):
-        Y_linear_high_grid, _ = linear_high_f1(X_normalized, reps=1)
-        Y_linear_high_grid = Y_linear_high_grid.mean(axis=0)
-        return Y_linear_high_grid
-
-    output_dir = get_project_root() / 'output' / 'lf_vs_hf_data_size' / DATASET
+    output_dir = get_project_root() / 'output' / 'lf_vs_hf_data_size' / 'psaap_problem'
     output_dir.mkdir(parents=True, exist_ok=True)
 
     torch.manual_seed(42)
@@ -55,7 +37,7 @@ def main():
 
     # Generate common test data once
     X_test_norm_np = lhs(2, N_test)
-    Y_test_H_norm_np = sampling_function_H(X_test_norm_np)
+    Y_test_H_norm_np = sample_HF_outcomes(X_test_norm_np)
 
     total_runs = num_nl * num_nh
     current_run = 0
@@ -71,10 +53,10 @@ def main():
 
                 # Generate training data for this specific configuration
                 X_L_init_norm_np = lhs(2, n_l)
-                Y_L_init_norm_np = sampling_function_L(X_L_init_norm_np)
+                Y_L_init_norm_np = sample_LF_outcomes(X_L_init_norm_np)
 
                 X_H_init_norm_np = lhs(2, n_h)
-                Y_H_init_norm_np = sampling_function_H(X_H_init_norm_np)
+                Y_H_init_norm_np = sample_HF_outcomes(X_H_init_norm_np)
 
                 X_L_train = torch.tensor(X_L_init_norm_np, dtype=torch.float32)
                 Y_L_train = torch.tensor(Y_L_init_norm_np, dtype=torch.float32)

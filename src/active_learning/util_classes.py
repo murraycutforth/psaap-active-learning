@@ -1,7 +1,7 @@
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Callable, Optional, Any
 
 import gpytorch
 import torch
@@ -30,11 +30,11 @@ class BiFidelityModel(ABC):
         pass
 
     @abstractmethod
-    def predict_prob_mean(self, x_predict):
+    def predict_hf_prob(self, x_predict):
         pass
 
     @abstractmethod
-    def predict_prob_var(self, x_predict):
+    def predict_hf_prob_var(self, x_predict):
         pass
 
 
@@ -64,6 +64,7 @@ class ALExperimentConfig:
     train_epochs: int = 500
     random_seed: Optional[int] = None
     N_reps: int = 5
+    model_args: dict[str, Any] = field(default_factory=lambda: dict())
 
     def __post_init__(self):
         if any(self.cost_constraints[i] > self.cost_constraints[i + 1] for i in range(len(self.cost_constraints) - 1)):

@@ -42,7 +42,7 @@ class TestMutualInformationBMFALStrategy(unittest.TestCase):
             (1, np.array([0.2, 0.2]))
         ]
         n_proposals = len(proposal_set)
-        n_mc = self.strategy.N_MC
+        n_mc = self.strategy.N_test_points
         X_prime = torch.rand(n_mc, 2)
         mock_mvn = MagicMock()
 
@@ -78,7 +78,7 @@ class TestMutualInformationBMFALStrategy(unittest.TestCase):
         """
         Test that MI is 0 when the proposal set is empty, without calling the model.
         """
-        calculated_mi = self.strategy._estimate_MI([], self.mock_model, torch.rand(self.strategy.N_MC, 2))
+        calculated_mi = self.strategy._estimate_MI([], self.mock_model, torch.rand(self.strategy.N_test_points, 2))
         self.assertEqual(calculated_mi, 0)
         self.mock_model.predict_multi_fidelity_latent_joint.assert_not_called()
 

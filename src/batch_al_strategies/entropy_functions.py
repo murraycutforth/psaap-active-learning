@@ -66,13 +66,12 @@ def estimate_marginal_entropy_H_Y(
     Estimates the marginal entropy H(Y) using a nested MC scheme.
 
     H(Y) is the first term in the mutual information I(Y;Q) = H(Y) - H(Y|Q).
-    This function's logic is analogous to the first term in BatchBALD.
 
     Args:
         M (int): Number of outer loop samples (for the expectation over Y).
         K (int): Number of inner loop samples (for marginalizing out R).
         joint_mvn (MultivariateNormal): The joint distribution p(R, Q).
-        d (int): The dimension of the candidate batch R (and labels Y).
+        d (int): The dimension of the candidate batch R (and labels Y). This is the sum of LF and HF observables.
         seed (int, optional): Random seed for reproducibility.
 
     Returns:
@@ -139,7 +138,7 @@ def estimate_marginal_entropy_H_Y(
     # ---------------
     # Average the estimates from the M outer loops
     final_H_Y = total_entropy_estimate / M
-    return final_H_Y
+    return final_H_Y.item()
 
 
 def estimate_conditional_entropy_H_Y_given_Q(
@@ -193,7 +192,7 @@ def estimate_conditional_entropy_H_Y_given_Q(
     # The conditional covariance is the same for all samples of Q
     cond_cov_R_given_Q = cov_RR - cov_RQ @ cov_QQ_inv @ cov_QR
     # Symmetrize and add jitter for numerical stability
-    cond_cov_R_given_Q = 0.5 * (cond_cov_R_given_Q + cond_cov_R_given_Q.T) + 1e-6 * torch.eye(dim_R)
+    cond_cov_R_given_Q = 0.5 * (cond_cov_R_given_Q + cond_cov_R_given_Q.T) + 1e-4 * torch.eye(dim_R)
 
     # Define the marginal distribution of Q to sample from
     # Add jitter to the covariance for stable sampling
@@ -256,4 +255,4 @@ def estimate_conditional_entropy_H_Y_given_Q(
     # ---------------
     # Average the estimates from the M outer loops
     final_H_Y_given_Q = total_entropy_estimate / M
-    return final_H_Y_given_Q
+    return final_H_Y_given_Q.item()

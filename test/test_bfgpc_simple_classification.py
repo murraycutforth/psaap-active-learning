@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from pyDOE import lhs
 
-from src.bfgpc import BFGPC_ELBO
+from src.models.bfgpc import BFGPC_ELBO
 from src.utils_plotting import plot_bfgpc_predictions, plot_bf_training_data
 
 

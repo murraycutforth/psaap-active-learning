@@ -23,8 +23,8 @@ class MutualInformationGridStrategy(MutualInformationBMFALStrategy):
     See: "Sequential Design with Mutual Information for Computer Experiments (MICE): Emulation of a Tsunami Model",
     Beck and Guillas, 2015
     """
-    def __init__(self, model: BiFidelityModel, dataset: BiFidelityDataset, seed=42, max_pool_subset=50, plot_all_scores=False):
-        super().__init__(model, dataset, seed=seed, plot_all_scores=plot_all_scores, max_pool_subset=max_pool_subset)
+    def __init__(self, model: BiFidelityModel, dataset: BiFidelityDataset, seed=42, N_test_points=100, max_pool_subset=50, plot_all_scores=False):
+        super().__init__(model, dataset, seed=seed, plot_all_scores=plot_all_scores, N_test_points=N_test_points, max_pool_subset=max_pool_subset)
 
     def __str__(self):
         return "MutualInformationGridStrategy"
@@ -116,14 +116,15 @@ class MutualInformationGridStrategy(MutualInformationBMFALStrategy):
             'MI_HF': []
         }
 
-        # --- IMPROVEMENT 2 & 4: Optimize inner loop and use Tensors early ---
-        # Convert to tensor once
         X_G = torch.from_numpy(X_G_np).float()
 
         # The set of points for which we evaluate the posterior entropy is X_G \ X_C,
         # which is precisely the set of available (unevaluated) points.
         eval_inds_list = list(available_indices)
+        if len(eval_inds_list) > self.N_test_points:
+            eval_inds_list = np.random.choice(eval_inds_list, size=self.N_test_points, replace=False)
         X_pred_base = X_G[eval_inds_list]
+
 
         # Create a map from the global index in X_G to the local index in X_pred_base
         # This allows us to quickly find which row to remove.
@@ -155,13 +156,16 @@ class MutualInformationGridStrategy(MutualInformationBMFALStrategy):
             x_cand = X_G[cand_ind]
 
             # Find the local index of the candidate to remove it from X_pred_base
-            local_idx_to_remove = global_to_local_pred_idx_map[cand_ind]
+            if cand_ind in global_to_local_pred_idx_map:
+                local_idx_to_remove = global_to_local_pred_idx_map[cand_ind]
 
-            # Create new prediction set by removing one row. This is much faster.
-            # Note: This still creates a new tensor. For ultimate speed, _estimate_MI
-            # could be modified to accept indices to ignore.
-            rows_to_keep = torch.arange(X_pred_base.shape[0]) != local_idx_to_remove
-            X_prime_new = X_pred_base[rows_to_keep]
+                # Create new prediction set by removing one row. This is much faster.
+                # Note: This still creates a new tensor. For ultimate speed, _estimate_MI
+                # could be modified to accept indices to ignore.
+                rows_to_keep = torch.arange(X_pred_base.shape[0]) != local_idx_to_remove
+                X_prime_new = X_pred_base[rows_to_keep]
+            else:
+                X_prime_new = X_pred_base
 
             # Check LF
             if flags[0]:

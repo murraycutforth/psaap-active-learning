@@ -7,8 +7,8 @@ from src.active_learning.util_classes import BiFidelityModel, BiFidelityDataset,
 class RandomStrategy(BiFidelityBatchALStrategy):
     """Baseline active learning strategy, randomly pick a fidelity and input coord until budget exhausted
     """
-    def __init__(self, model: BiFidelityModel, dataset: BiFidelityDataset, seed=42, gamma=0.5):
-        super().__init__(model, dataset)
+    def __init__(self, dataset: BiFidelityDataset, seed=42, gamma=0.5):
+        super().__init__(dataset)
         self.gen = np.random.default_rng(seed=seed)
         self.gamma = gamma
         assert 0.0 <= gamma <= 1.0

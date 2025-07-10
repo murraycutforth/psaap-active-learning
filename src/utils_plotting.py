@@ -81,7 +81,7 @@ def plot_bfgpc_predictions_two_axes(model, grid_res=100, X_LF=None, Y_LF=None, X
     with torch.no_grad(), gpytorch.settings.fast_pred_var():
         # --- LF Predictions ---
         # If your model has a predict_lf method as defined above:
-        predicted_probs_lf_grid = model.predict_lf(grid_points_torch)
+        predicted_probs_lf_grid = model.predict_lf_prob(grid_points_torch)
         # Alternatively, if you don't want to add predict_lf to the model class:
         # lf_latent_output = model.lf_model(grid_points_torch)
         # predicted_probs_lf_grid = model.lf_likelihood(lf_latent_output).mean
@@ -95,8 +95,8 @@ def plot_bfgpc_predictions_two_axes(model, grid_res=100, X_LF=None, Y_LF=None, X
         predicted_f_H = model.predict_f_H(grid_points_torch)
         predicted_delta = model.predict_delta(grid_points_torch)
 
-    predicted_probs_lf_grid_reshaped = predicted_probs_lf_grid.cpu().numpy().reshape(grid_res, grid_res)
-    predicted_probs_hf_grid_reshaped = predicted_probs_hf_grid.cpu().numpy().reshape(grid_res, grid_res)
+    predicted_probs_lf_grid_reshaped = predicted_probs_lf_grid.reshape(grid_res, grid_res)
+    predicted_probs_hf_grid_reshaped = predicted_probs_hf_grid.reshape(grid_res, grid_res)
     predicted_f_L_mean_grid = predicted_f_L.mean.numpy().reshape(grid_res, grid_res)
     predicted_f_H_mean_grid = predicted_f_H.mean.numpy().reshape(grid_res, grid_res)
     predicted_f_L_var_grid = predicted_f_L.variance.numpy().reshape(grid_res, grid_res)

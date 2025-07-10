@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from pyDOE import lhs
 
-from src.bfgpc import BFGPC_ELBO
+from src.models.bfgpc import BFGPC_ELBO
 from src.experiments.main_lf_vs_hf_data_size import plot_heatmap
 
 

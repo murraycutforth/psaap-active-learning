@@ -5,11 +5,10 @@ import logging
 import numpy as np
 import pandas as pd
 import pyDOE
-import torch
 
 from src.active_learning.util_classes import BiFidelityModel, BiFidelityDataset, ALExperimentConfig
 from src.batch_al_strategies.base import BiFidelityBatchALStrategy
-from src.bfgpc import BFGPC_ELBO
+from src.models.bfgpc import BFGPC_ELBO
 from src.utils_plotting import plot_bf_training_data, plot_bfgpc_predictions_two_axes, plot_active_learning_training_data, plot_al_summary_from_dataframe_mpl
 from src.paths import get_project_root
 
@@ -17,18 +16,16 @@ from src.paths import get_project_root
 class ALExperimentRunner():
     """Orchestrate AL loop, record results
     """
-    def __init__(self, model: BiFidelityModel, dataset: BiFidelityDataset, al_strategy: BiFidelityBatchALStrategy, config: ALExperimentConfig):
-        self.model = model
+    def __init__(self, dataset: BiFidelityDataset, al_strategy: BiFidelityBatchALStrategy, config: ALExperimentConfig):
         self.dataset = dataset
         self.al_strategy = al_strategy
         self.config = config
-        self.model_name = model.__class__.__name__
         self.strategy_name_str = str(self.al_strategy)
 
         if self.config.random_seed is not None:
             np.random.seed(self.config.random_seed)
 
-        self.outdir = get_project_root() / "output" / "active_learning" / f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.dataset.name}_{self.strategy_name_str}"
+        self.outdir = get_project_root() / "output" / "active_learning" / self.dataset.name / f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.strategy_name_str}"
         self.outdir.mkdir(parents=True)
 
         # Setup logging
@@ -48,7 +45,6 @@ class ALExperimentRunner():
         self.logger.info(f"Experiment runner initialized. Output directory: {self.outdir}")
         self.logger.info(f"Config: {self.config}")
         self.logger.info(f"Dataset: {self.dataset.name}, LF cost: {self.dataset.c_LF}, HF cost: {self.dataset.c_HF}")
-        self.logger.info(f"Model: {self.model_name}")
         self.logger.info(f"Strategy: {self.strategy_name_str}")
 
     def _generate_lhs_samples(self, n_samples: int) -> np.ndarray:
@@ -70,6 +66,9 @@ class ALExperimentRunner():
         # 1. Generate fixed Test Data for ELPP evaluation
         X_test = self._generate_lhs_samples(self.config.N_test)
         Y_test = self.dataset.sample_HF(X_test)
+
+        scale = 20 * (1 - 0.75 * X_test[:, 0])
+        p_HF_test_true = self.dataset.true_p_HF(X_test, scale)
         self.logger.info(f"Generated {self.config.N_test} test points for ELPP evaluation.")
 
         # Outer loop, repeat for uncertainties in AL method comparison
@@ -100,11 +99,16 @@ class ALExperimentRunner():
 
             # 5. Initial Model Training and Evaluation (Round 0)
             self.logger.info("Training initial model...")
-            self.model.train_model(X_L_train, Y_L_train, X_H_train, Y_H_train, self.config.train_lr, self.config.train_epochs)
-            elpp_round_0 = self.model.evaluate_elpp(X_test, Y_test)
+            model = BFGPC_ELBO(**self.config.model_args)
+            model.train_model(X_L_train, Y_L_train, X_H_train, Y_H_train, self.config.train_lr, self.config.train_epochs)
+
+            elpp_round_0 = model.evaluate_elpp(X_test, Y_test)
             self.logger.info(f"Round 0: ELPP = {elpp_round_0:.4f}, Cost = {current_total_cost:.2f}")
 
-            plot_bfgpc_predictions_two_axes(model=self.model, true_p_LF=self.dataset.true_p_LF, true_p_HF=self.dataset.true_p_HF,
+            pred_mean_p_HF = model.predict_hf_prob(X_test)
+            mse = np.mean((pred_mean_p_HF - p_HF_test_true) ** 2)
+
+            plot_bfgpc_predictions_two_axes(model=model, true_p_LF=self.dataset.true_p_LF, true_p_HF=self.dataset.true_p_HF,
                                             outpath=rep_outdir / f"model_predictions_0.png")
 
             results_history.append({
@@ -112,6 +116,7 @@ class ALExperimentRunner():
                 "round": 0,
                 "cumulative_cost": current_total_cost,
                 "elpp": elpp_round_0,
+                "mse": mse,
                 "lf_queried_this_round": self.config.N_L_init,
                 "hf_queried_this_round": self.config.N_H_init,
                 "total_lf_samples": X_L_train.shape[0],
@@ -133,7 +138,7 @@ class ALExperimentRunner():
                 self.logger.info(f"Querying strategy for batch with budget {budget_for_this_step:.2f}...")
                 new_X_L, new_X_H = self.al_strategy.select_batch(
                     config=self.config,
-                    current_model_trained=self.model,  # Pass the currently trained model instance
+                    current_model_trained=model,  # Pass the currently trained model instance
                     budget_this_step=budget_for_this_step
                 )
                 self.logger.info(f"Strategy selected {len(new_X_L)} LF and {len(new_X_H)} HF points.")
@@ -165,20 +170,25 @@ class ALExperimentRunner():
 
                 # Retrain model
                 self.logger.info(f"Retraining model with new dataset of size {X_L_train.shape[0]} and {X_H_train.shape[0]}.")
-                model = BFGPC_ELBO()
-                self.model = model
-                self.model.train_model(X_L_train, Y_L_train, X_H_train, Y_H_train, self.config.train_lr, self.config.train_epochs)
+                model = BFGPC_ELBO(**self.config.model_args)
+                model.train_model(X_L_train, Y_L_train, X_H_train, Y_H_train, self.config.train_lr, self.config.train_epochs)
 
                 # Evaluate ELPP
-                current_elpp = self.model.evaluate_elpp(X_test, Y_test)
+                current_elpp = model.evaluate_elpp(X_test, Y_test)
                 self.logger.info(
                     f"Round {al_round_num}: ELPP = {current_elpp:.4f}, Cost Incurred this round = {cost_this_batch:.2f}, Cumulative Cost = {current_total_cost:.2f}")
+
+                # Evaluate MSE of mean probability
+                pred_mean_p_HF = model.predict_hf_prob(X_test)
+                mse = np.mean((pred_mean_p_HF - p_HF_test_true)**2)
+                self.logger.info(f"MSE = {mse:.4f}")
 
                 results_history.append({
                     "repeat": run_iter,
                     "round": al_round_num,
                     "cumulative_cost": current_total_cost,
                     "elpp": current_elpp,
+                    "mse": mse,
                     "lf_queried_this_round": len(new_X_L),
                     "hf_queried_this_round": len(new_X_H),
                     "total_lf_samples": X_L_train.shape[0],
@@ -191,14 +201,14 @@ class ALExperimentRunner():
                     outpath=rep_outdir / f"data_plot_{al_round_num}.png")
 
                 # Plot current model predictions
-                plot_bfgpc_predictions_two_axes(model=self.model, true_p_LF=self.dataset.true_p_LF, true_p_HF=self.dataset.true_p_HF,
+                plot_bfgpc_predictions_two_axes(model=model, true_p_LF=self.dataset.true_p_LF, true_p_HF=self.dataset.true_p_HF,
                                                 outpath=rep_outdir / f"model_predictions_{al_round_num}.png")
 
             self.logger.info("AL loop complete")
 
             # Plot history of training data
             plot_active_learning_training_data(all_X_LF, all_X_HF,
-                                               outpath=rep_outdir / f"active_learning_training_data.png")
+                                               outpath=self.outdir / f"training_data_{run_iter:02d}.png")
 
         self.logger.info("All repeats complete")
 
@@ -216,7 +226,7 @@ class ALExperimentRunner():
         config_dict["dataset_name"] = self.dataset.name
         config_dict["dataset_c_LF"] = self.dataset.c_LF
         config_dict["dataset_c_HF"] = self.dataset.c_HF
-        config_dict["model_name"] = self.model_name
+        config_dict["model_name"] = str(model)
         config_dict["strategy_name"] = self.strategy_name_str
         pd.DataFrame([config_dict]).to_csv(os.path.join(self.outdir, "experiment_config.csv"), index=False)
 

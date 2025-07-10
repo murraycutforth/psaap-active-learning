@@ -9,6 +9,7 @@
 
  Author: Murray Cutforth
 """
+import copy
 import logging
 
 import pyDOE
@@ -16,6 +17,7 @@ import torch
 import numpy as np
 import gpytorch
 from matplotlib import pyplot as plt
+from linear_operator.operators import DiagLinearOperator, CatLinearOperator, AddedDiagLinearOperator
 from pyDOE import lhs
 
 from src.utils_plotting import plot_bfgpc_predictions, plot_bf_training_data
@@ -105,14 +107,14 @@ def _assemble_T(N_H, N_L, N_f_L_unique, N_f_delta, N_prime, inverse_indices_L, r
 
 
 class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
-    def __init__(self, train_x_lf=None, train_x_hf=None, initial_rho=1.0, l2_reg_lambda=0.01):
+    def __init__(self, train_x_lf=None, train_x_hf=None, n_inducing_pts=128, initial_rho=1.0, l2_reg_lambda=0.01):
         super().__init__()
 
         if train_x_lf is None:
-           train_x_lf = torch.tensor(pyDOE.lhs(2, 128, criterion='maximin', iterations=10)).float()
+           train_x_lf = torch.tensor(pyDOE.lhs(2, n_inducing_pts)).float()
 
         if train_x_hf is None:
-            train_x_hf = torch.tensor(pyDOE.lhs(2, 128, criterion='maximin', iterations=10)).float()
+            train_x_hf = torch.tensor(pyDOE.lhs(2, n_inducing_pts)).float()
 
         self.lf_model = GP_Submodel(train_x_lf)
         self.delta_model = GP_Submodel(train_x_hf)
@@ -255,10 +257,25 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
 
         return predictive_probs_hf
 
-    def predict_prob_mean(self, x_predict):
+    def predict_hf_prob(self, x_predict):
+        if not torch.is_tensor(x_predict):
+            x_predict = torch.tensor(x_predict).float()
+
         return self.forward(x_predict).detach().numpy()
 
-    def predict_prob_var(self, x_predict):
+    def predict_lf_prob(self, x_predict):
+        """
+        Predicts P(Y_L=1 | x_eval)
+        x_eval: points at which to evaluate the LF prediction
+        """
+        if not torch.is_tensor(x_predict):
+            x_predict = torch.tensor(x_predict).float()
+
+        q_f_l_at_xpredict = self.lf_model(x_predict)
+        lf_pred_probs = self.lf_likelihood(q_f_l_at_xpredict).mean
+        return lf_pred_probs.detach().numpy()
+
+    def predict_hf_prob_var(self, x_predict):
         self.eval()
 
         if not torch.is_tensor(x_predict):
@@ -279,16 +296,6 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
             output_probs = gpytorch.distributions.base_distributions.Normal(0, 1).cdf(q_samples)
 
         return output_probs.var(dim=0).detach().numpy()
-
-
-    def predict_lf(self, x_predict):
-        """
-        Predicts P(Y_L=1 | x_eval)
-        x_eval: points at which to evaluate the LF prediction
-        """
-        q_f_l_at_xpredict = self.lf_model(x_predict)
-        lf_pred_probs = self.lf_likelihood(q_f_l_at_xpredict).mean
-        return lf_pred_probs
 
     def predict_f_H(self, x_predict):
         """
@@ -328,7 +335,7 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
             q_delta = self.delta_model(x_predict)
         return q_delta
 
-    def predict_multi_fidelity_latent_joint(self, X_L: torch.tensor, X_H: torch.tensor, X_prime: torch.tensor):
+    def predict_multi_fidelity_latent_joint(self, X_L: torch.tensor, X_H: torch.tensor, X_prime: torch.tensor, extra_assertions: bool = False):
         """
         Predicts joint distribution of latent f_L at X_L and f_H at X_H and X_prime.
         Used to compute mutual information between multifidelity proposal set and HF latent.
@@ -347,10 +354,11 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
         assert X_H.dtype == torch.float32
         assert X_prime.dtype == torch.float32
 
-        # There cannot be identical points in X_H and X_prime otherwise the resulting distribution will be degenerate
-        X_H_and_prime = torch.cat((X_H, X_prime), dim=0)
-        uniqueness_test = torch.unique(X_H_and_prime, dim=0)
-        assert uniqueness_test.shape[0] == X_H_and_prime.shape[0], f"{X_H_and_prime.shape[0]} != {uniqueness_test.shape[0]}, X_H shape = {X_H.shape}, X_prime shape = {X_prime.shape}"
+        if extra_assertions:
+            # There cannot be identical points in X_H and X_prime otherwise the resulting distribution will be degenerate
+            X_H_and_prime = torch.cat((X_H, X_prime), dim=0)
+            uniqueness_test = torch.unique(X_H_and_prime, dim=0)
+            assert uniqueness_test.shape[0] == X_H_and_prime.shape[0], f"{X_H_and_prime.shape[0]} != {uniqueness_test.shape[0]}, X_H shape = {X_H.shape}, X_prime shape = {X_prime.shape}"
 
         self.eval()
 
@@ -400,57 +408,218 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
             K_intermediate = 0.5 * (K_intermediate + K_intermediate.T)  # Ensure K is exactly symmetric
             f_target_sigma = K_intermediate + 1e-6 * torch.eye(K_intermediate.shape[0])
 
-            #eigenvals_intermediate = torch.linalg.eigvalsh(K_intermediate)
-            #eigenvals_final = torch.linalg.eigvalsh(f_target_sigma)
+            return gpytorch.distributions.MultivariateNormal(f_target_mu, f_target_sigma,
+                                                             validate_args=extra_assertions)
 
-            #if torch.min(eigenvals_final) <= 0:
-            #    logger.error(f"Min eigenval intermediate: {torch.min(eigenvals_intermediate)}")
-            #    logger.error(f"Min eigenval final: {torch.min(eigenvals_final)}")
+    def predict_multi_fidelity_latent_joint_lazy(
+            self,
+            X_L: torch.tensor,
+            X_H: torch.tensor,
+            X_prime: torch.tensor,
+            extra_assertions: bool = False
+    ):
+        """
+        Predicts joint distribution of latent f_L at X_L and f_H at X_H and X_prime
+        using GPyTorch's LazyTensor (LinearOperator) framework.
 
-            try:
-                return gpytorch.distributions.MultivariateNormal(f_target_mu, f_target_sigma, validate_args=True)
-            except ValueError:
-                logger.critical("Non positive definite covariance matrix (probably)")
-                plt.imshow(f_target_sigma)
-                plt.colorbar()
-                plt.show()
-                f_target_sigma += 1e-3 * torch.eye(K_intermediate.shape[0])
-                return gpytorch.distributions.MultivariateNormal(f_target_mu, f_target_sigma, validate_args=True)
+        This avoids forming large, dense covariance matrices, making it highly efficient
+        for large X_prime (e.g., a dense grid).
 
-    def train_model(self, X_LF, Y_LF, X_HF, Y_HF, lr=0.01, n_epochs=1000):
+        :param X_L: Low fidelity proposal locations.
+        :param X_H: High fidelity proposal locations.
+        :param X_prime: High fidelity Monte Carlo locations.
+        :return: gpytorch.distributions.MultivariateNormal with a lazy covariance.
+        """
+        # --- 1. Input Validation and Preparation ---
+        assert X_L.dtype == torch.float32 and X_H.dtype == torch.float32 and X_prime.dtype == torch.float32
+        if extra_assertions:
+            # This check is still valid and important for preventing singular matrices.
+            X_H_and_prime = torch.cat((X_H, X_prime), dim=0)
+            uniqueness_test = torch.unique(X_H_and_prime, dim=0)
+            assert uniqueness_test.shape[0] == X_H_and_prime.shape[0], \
+                f"There are duplicate points between X_H and X_prime, which is not allowed."
+
+        self.eval()
+
+        N_L, N_H, N_prime = X_L.shape[0], X_H.shape[0], X_prime.shape[0]
+        rho = self.rho.item()
+        d = X_prime.shape[1]
+
+        # Handle empty inputs gracefully
+        if N_L == 0: X_L = torch.empty((0, d), dtype=X_prime.dtype, device=X_prime.device)
+        if N_H == 0: X_H = torch.empty((0, d), dtype=X_prime.dtype, device=X_prime.device)
+
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            # --- 2. Get Base Predictive Distributions (as Lazy objects) ---
+            # We query the models ONCE with all the points needed for f_L and f_delta.
+            # This allows GPyTorch to efficiently compute all required cross-covariances.
+            all_L_points = torch.cat([X_L, X_H, X_prime], dim=0)
+            all_delta_points = torch.cat([X_H, X_prime], dim=0)
+
+            # These calls return distributions with LAZY covariance matrices
+            pred_L_dist = self.lf_model(all_L_points)
+            pred_delta_dist = self.delta_model(all_delta_points)
+
+            # --- 3. Construct the Joint Mean Vector ---
+            # This is simple as f_H(x) = rho * f_L(x) + delta(x)
+            mu_L_all = pred_L_dist.mean
+            mu_delta_all = pred_delta_dist.mean
+
+            # Mean of f_L(X_L)
+            mean_fL_at_XL = mu_L_all[:N_L]
+            # Mean of f_H(X_H) = rho * f_L(X_H) + delta(X_H)
+            mean_fH_at_XH = rho * mu_L_all[N_L:N_L + N_H] + mu_delta_all[:N_H]
+            # Mean of f_H(X_prime) = rho * f_L(X_prime) + delta(X_prime)
+            mean_fH_at_Xprime = rho * mu_L_all[N_L + N_H:] + mu_delta_all[N_H:]
+
+            f_target_mu = torch.cat([mean_fL_at_XL, mean_fH_at_XH, mean_fH_at_Xprime], dim=0)
+
+            # --- 4. Construct the Joint Covariance Matrix (as a Lazy Block Matrix) ---
+            # The target covariance is Cov([f_L(X_L), f_H(X_H), f_H(X_prime)]).
+            # We build this as a 3x3 block matrix using the lazy covariance operators.
+            K_L_lazy = pred_L_dist.lazy_covariance_matrix
+            K_delta_lazy = pred_delta_dist.lazy_covariance_matrix
+
+            # Define slices for clarity
+            sl_L = slice(None, N_L)
+            sl_H = slice(N_L, N_L + N_H)
+            sl_p = slice(N_L + N_H, None)
+
+            sl_delta_H = slice(None, N_H)
+            sl_delta_p = slice(N_H, None)
+
+            # Block (0,0): Cov(f_L(X_L), f_L(X_L))
+            K00 = K_L_lazy[sl_L, sl_L]
+            # Block (0,1): Cov(f_L(X_L), f_H(X_H)) = rho * K_L(X_L, X_H)
+            K01 = K_L_lazy[sl_L, sl_H].mul(rho)
+            # Block (0,2): Cov(f_L(X_L), f_H(X_prime)) = rho * K_L(X_L, X_prime)
+            K02 = K_L_lazy[sl_L, sl_p].mul(rho)
+
+            # Block (1,1): Cov(f_H(X_H), f_H(X_H)) = rho^2*K_L(X_H,X_H) + K_delta(X_H,X_H)
+            K11 = K_L_lazy[sl_H, sl_H].mul(rho ** 2).add(K_delta_lazy[sl_delta_H, sl_delta_H])
+            # Block (1,2): Cov(f_H(X_H), f_H(X_prime)) = rho^2*K_L(X_H,X_prime) + K_delta(X_H,X_prime)
+            K12 = K_L_lazy[sl_H, sl_p].mul(rho ** 2).add(K_delta_lazy[sl_delta_H, sl_delta_p])
+
+            # Block (2,2): Cov(f_H(X_prime), f_H(X_prime)) = rho^2*K_L(X_prime,X_prime) + K_delta(X_prime,X_prime)
+            K22 = K_L_lazy[sl_p, sl_p].mul(rho ** 2).add(K_delta_lazy[sl_delta_p, sl_delta_p])
+
+            # Assemble the blocks into a single lazy operator.
+            f_target_cov_lazy = CatLinearOperator(
+                    CatLinearOperator(K00, K01, K02, dim=-1),
+                    CatLinearOperator(K01.transpose(-1, -2), K11, K12, dim=-1),
+                    CatLinearOperator(K02.transpose(-1, -2), K12.transpose(-1, -2), K22, dim=-1),
+                dim=(-2)
+            )
+
+            # Add a small diagonal jitter for numerical stability (the lazy way)
+            total_size = N_L + N_H + N_prime
+            jitter_diag = DiagLinearOperator(torch.full((total_size,), 1e-6, device=f_target_cov_lazy.device))
+            f_target_sigma_lazy = AddedDiagLinearOperator(f_target_cov_lazy, jitter_diag)
+
+            return gpytorch.distributions.MultivariateNormal(
+                f_target_mu,
+                f_target_sigma_lazy,
+                validate_args=extra_assertions
+            )
+
+    def _reinitialize_parameters(self):
+        """
+        Helper method to re-initialize model parameters for a new training run.
+        This ensures each of the `n_inits` runs starts from a different random state.
+        """
+        # --- Manually reset the variational parameters to match the N(0, I) prior ---
+
+        # CORRECTED ACCESS PATH: Use the private `_variational_distribution` to get the module.
+        lf_dist_module = self.lf_model.variational_strategy._variational_distribution
+        # Set mean to 0
+        lf_dist_module.variational_mean.data.zero_()
+        # Set covariance to Identity by setting its Cholesky factor to Identity
+        n_inducing_lf = lf_dist_module.variational_mean.shape[0]
+        identity_lf = torch.eye(n_inducing_lf, device=lf_dist_module.chol_variational_covar.device)
+        lf_dist_module.chol_variational_covar.data.copy_(identity_lf)
+
+        # Do the same for the Delta model
+        delta_dist_module = self.delta_model.variational_strategy._variational_distribution
+        # Set mean to 0
+        delta_dist_module.variational_mean.data.zero_()
+        # Set covariance to Identity
+        n_inducing_delta = delta_dist_module.variational_mean.shape[0]
+        identity_delta = torch.eye(n_inducing_delta, device=delta_dist_module.chol_variational_covar.device)
+        delta_dist_module.chol_variational_covar.data.copy_(identity_delta)
+
+        # Reset kernel hyperparameters and rho by re-initializing their raw, untransformed values.
+        # We sample from a standard normal distribution, which is a common practice.
+        with torch.no_grad():
+            self.lf_model.covar_module.base_kernel.raw_lengthscale.normal_()
+            self.lf_model.covar_module.raw_outputscale.normal_()
+            self.delta_model.covar_module.base_kernel.raw_lengthscale.normal_()
+            self.delta_model.covar_module.raw_outputscale.normal_()
+            # Reset rho to a random value. Since it's passed through a sigmoid,
+            # a raw value sampled from N(0, 0.5^2) will be centered around 0.5 post-transform.
+            self.rho.normal_(mean=0.0, std=0.5)
+
+    def train_model(self, X_LF, Y_LF, X_HF, Y_HF, lr=0.01, n_epochs=1000, n_inits=3, verbose=False):
         """Also confusingly referred to as the inference step in the GP literature.
 
         Here we maximise the ELBO, optimising both the variational parameters and the kernel hyperparameters.
-        The kernel hyperparameters are treated as point estimates (no prior), while the variational parameters u_i
-        which are located at the inducing points specified in the submodels for f_L and delta have GP priors and
-        approximate posteriors. This approach is known as empirical Bayes.
+        To improve robustness, this method performs `n_inits` separate training runs from different
+        random initializations and selects the model with the best final ELBO.
         """
-        if not torch.is_tensor(X_LF):
-            X_LF = torch.tensor(X_LF).float()
-        if not torch.is_tensor(Y_LF):
-            Y_LF = torch.tensor(Y_LF).float()
-        if not torch.is_tensor(X_HF):
-            X_HF = torch.tensor(X_HF).float()
-        if not torch.is_tensor(Y_HF):
-            Y_HF = torch.tensor(Y_HF).float()
+        if n_inits < 1:
+            raise ValueError("Number of initializations (n_inits) must be at least 1.")
 
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+        if not torch.is_tensor(X_LF): X_LF = torch.tensor(X_LF).float()
+        if not torch.is_tensor(Y_LF): Y_LF = torch.tensor(Y_LF).float()
+        if not torch.is_tensor(X_HF): X_HF = torch.tensor(X_HF).float()
+        if not torch.is_tensor(Y_HF): Y_HF = torch.tensor(Y_HF).float()
 
-        self.train()
+        best_loss = float('inf')
+        best_state_dict = None
 
-        logger.debug("Starting training...")
-        for epoch in range(n_epochs):
-            optimizer.zero_grad()
-            loss = self._calculate_loss(X_LF, Y_LF, X_HF, Y_HF)
-            loss.backward()
-            optimizer.step()
-            if (epoch + 1) % (n_epochs // 10) == 0:
-                logger.debug(f"Epoch {epoch + 1}/{n_epochs}, Loss: {loss.item():.4f}")
-                logger.debug(f"  Rho: {self.rho.item():.4f}")
-                logger.debug(f"  LF model lengthscale: {self.lf_model.covar_module.base_kernel.lengthscale.item():.4f}, "
-                            f"outputscale: {self.lf_model.covar_module.outputscale.item():.4f}")
-                logger.debug(f"  Delta model lengthscale: {self.delta_model.covar_module.base_kernel.lengthscale.item():.4f}, "
-                      f"outputscale: {self.delta_model.covar_module.outputscale.item():.4f}")
+        logger.debug(f"Starting training with {n_inits} random initialization(s).")
+
+        for i in range(n_inits):
+            logger.debug(f"--- Running initialization {i + 1}/{n_inits} ---")
+
+            # Re-initialize model parameters for a fresh start
+            self._reinitialize_parameters()
+
+            # Create a new optimizer for each run to reset its state
+            optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+            self.train()
+
+            # The actual training loop for one initialization
+            for epoch in range(n_epochs):
+                optimizer.zero_grad()
+                loss = self._calculate_loss(X_LF, Y_LF, X_HF, Y_HF)
+                loss.backward()
+                optimizer.step()
+                if verbose and (epoch + 1) % (n_epochs // 10) == 0:
+                    logger.debug(f"Epoch {epoch + 1}/{n_epochs}, Loss: {loss.item():.4f}")
+                    # Optional: Add back detailed logging if needed under the verbose flag
+                    # logger.debug(f"  Rho: {self.rho.item():.4f}") ... etc
+
+            # After training, evaluate the final loss for this initialization
+            # We must set model to eval mode to get a deterministic loss value
+            self.eval()
+            with torch.no_grad():
+                final_loss = self._calculate_loss(X_LF, Y_LF, X_HF, Y_HF).item()
+            logger.debug(f"Initialization {i + 1} finished with final loss: {final_loss:.4f}")
+
+            # If this run is the best so far, save its parameters
+            if final_loss < best_loss:
+                best_loss = final_loss
+                # Use deepcopy to prevent pointers to the same memory
+                best_state_dict = copy.deepcopy(self.state_dict())
+                logger.debug(f"  ** New best model found (Loss: {best_loss:.4f}) **")
+
+        # After all initializations, load the best parameters back into the model
+        if best_state_dict is not None:
+            logger.debug(f"Finished all initializations. Loading best model with loss: {best_loss:.4f}")
+            self.load_state_dict(best_state_dict)
+        else:
+            # This case should not be reached if n_inits >= 1
+            logger.warning("Training finished, but no best model state was found.")
 
         logger.debug("Training finished.")
 
@@ -458,26 +627,28 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
         """The expected log predictive probability is a standard metric in the VI literature.
         This metric is suitable for probability estimation, as we have in the PSAAP problem.
         """
+        pred_probs_p1 = self.forward(X_HF_test)
 
-        self.eval()
-        X_HF_test = torch.tensor(X_HF_test).float()
-        Y_HF_test = torch.tensor(Y_HF_test).float()
+        # Ensure Y_HF_test is a torch tensor for calculations
+        if not torch.is_tensor(Y_HF_test):
+            Y_HF_test = torch.tensor(Y_HF_test).float()
 
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            q_f_l_at_xpredict = self.lf_model(X_HF_test)
-            q_f_delta_at_xpredict = self.delta_model(X_HF_test)
+        # 2. Calculate the log probability of the TRUE class for each sample.
+        #    This is the log-likelihood of the Bernoulli distribution.
+        #    - If Y_HF_test is 1, this becomes: 1 * log(p1) + 0 * log(1-p1) = log(p1)
+        #    - If Y_HF_test is 0, this becomes: 0 * log(p1) + 1 * log(1-p1) = log(1-p1)
+        #    We add a small epsilon for numerical stability to avoid log(0).
+        epsilon = 1e-8
+        log_probs_of_true_class = (
+                Y_HF_test * torch.log(pred_probs_p1 + epsilon) +
+                (1 - Y_HF_test) * torch.log(1 - pred_probs_p1 + epsilon)
+        )
 
-            mean_fh_predict = self.rho * q_f_l_at_xpredict.mean + q_f_delta_at_xpredict.mean
-            var_fh_predict = (self.rho.pow(2)) * q_f_l_at_xpredict.variance + q_f_delta_at_xpredict.variance
+        # 3. The ELPP is the average of these log probabilities.
+        elpp = torch.mean(log_probs_of_true_class)
 
-            q_f_h_predict = gpytorch.distributions.MultivariateNormal(mean_fh_predict,
-                                                                      torch.diag_embed(var_fh_predict))
+        return elpp.item()
 
-            # This is the E_q[log p(Y_HF_test | f_H(X_HF_test))]
-            test_elp = self.hf_likelihood.expected_log_prob(Y_HF_test, q_f_h_predict)
-            sum_test_elp = test_elp.sum().numpy().item()
-
-        return sum_test_elp / len(Y_HF_test)
 
     def evaluate_accuracy(self, X_HF_test, Y_HF_test):
         """If we have a classification problem (rather than probability estimation).
@@ -497,7 +668,7 @@ if __name__ == '__main__':
     import os
     import numpy as np
 
-    os.makedirs("output_plots_bfgpc", exist_ok=True)
+    os.makedirs("../output_plots_bfgpc", exist_ok=True)
     torch.manual_seed(42)
     np.random.seed(42)
 

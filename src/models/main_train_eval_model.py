@@ -4,18 +4,13 @@ Just train and evaluate ELPP for a single model, no active learning
 
 import datetime
 import logging
-import os
 
-from tqdm import tqdm
-import pandas as pd
 import pyDOE
-import torch
-from matplotlib import pyplot as plt
 
 from src.active_learning.util_classes import BiFidelityDataset, ALExperimentConfig
-from src.bfgpc import BFGPC_ELBO
+from src.models.bfgpc import BFGPC_ELBO
 from src.paths import get_project_root
-from src.toy_example import create_smooth_change_linear, create_smooth_change_nonlinear
+from src.problems.toy_example import create_smooth_change_nonlinear
 from src.utils_plotting import plot_bf_training_data, plot_bfgpc_predictions_two_axes
 
 logging.basicConfig(level=logging.INFO)

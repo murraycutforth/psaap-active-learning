@@ -2,7 +2,7 @@ import unittest
 import torch
 import gpytorch
 
-from src.bfgpc import _assemble_T, BFGPC_ELBO
+from src.models.bfgpc import _assemble_T, BFGPC_ELBO
 
 
 class TestPredictMultiFidelityLatentJoint(unittest.TestCase):

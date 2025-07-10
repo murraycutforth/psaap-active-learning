@@ -6,8 +6,8 @@ from gpytorch.distributions import MultivariateNormal
 from collections import Counter
 
 from src.active_learning.util_classes import BiFidelityDataset, ALExperimentConfig
-from src.bfgpc import BFGPC_ELBO
-from src.toy_example import create_smooth_change_linear
+from src.models.bfgpc import BFGPC_ELBO
+from src.problems.toy_example import create_smooth_change_linear
 
 #from src.batch_al_strategies.entropy_functions import calculate_entropy_from_samples_miller_madow, calculate_entropy_from_samples
 from src.batch_al_strategies.entropy_functions import estimate_marginal_entropy_H_Y, estimate_conditional_entropy_H_Y_given_Q
@@ -283,15 +283,15 @@ def main():
     model.train_model(X_L_train, Y_L_train, X_H_train, Y_H_train, base_config.train_lr, base_config.train_epochs)
 
     X_test = torch.tensor(pyDOE.lhs(2, samples=100)).float()
-    X_cand_LF = torch.tensor(pyDOE.lhs(2, samples=1)).float()
-    X_cand_HF = torch.tensor(pyDOE.lhs(2, samples=1)).float()
+    X_cand_LF = torch.tensor(pyDOE.lhs(2, samples=50)).float()
+    X_cand_HF = torch.tensor(pyDOE.lhs(2, samples=50)).float()
 
-    joint_mvn = model.predict_multi_fidelity_latent_joint(X_cand_LF, X_cand_HF, X_test)
+    joint_mvn = model.predict_multi_fidelity_latent_joint(X_cand_LF, X_cand_HF, X_test, extra_assertions=True)
 
     # MI convergence
     M_vals = [5, 10, 20, 40, 80, 160, 320]
     N_vals = [5, 10, 20, 40, 80, 160, 320]
-    MI_grid, MI_grid_std, HY_grid, HYgQ_grid, M_vals, N_vals = MI_convergence_experiment(joint_mvn, M_vals, N_vals, d=2, n_repeats=5)
+    MI_grid, MI_grid_std, HY_grid, HYgQ_grid, M_vals, N_vals = MI_convergence_experiment(joint_mvn, M_vals, N_vals, d=100, n_repeats=5)
     plot_convergence(MI_grid, HY_grid, HYgQ_grid, M_vals, N_vals)
     plot_mi_lines(MI_grid, MI_grid_std, M_vals, N_vals)
 
