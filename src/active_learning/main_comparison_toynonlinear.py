@@ -1,3 +1,8 @@
+import os 
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 import logging
 
 import pyDOE
@@ -10,6 +15,7 @@ from src.batch_al_strategies.random_strategy import RandomStrategy
 from src.batch_al_strategies.mutual_information_strategy_bmfal import MutualInformationBMFALStrategy
 from src.batch_al_strategies.mutual_information_strategy_grid_latents import MutualInformationGridStrategy
 from src.batch_al_strategies.mutual_information_strategy_grid_observables import MutualInformationGridStrategyObservables
+from src.batch_al_strategies.batch_bald_Y import BatchBALDBMFALStrategy
 from src.batch_al_strategies.max_uncertainty_diversity import MaxUncertaintyStrategy
 from src.toy_example import create_smooth_change_linear, create_smooth_change_nonlinear
 
@@ -51,6 +57,7 @@ def main():
     )
 
     strategies = [
+        BatchBALDBMFALStrategy(model=model, dataset=dataset, seed=seed, max_pool_subset=50),
         RandomStrategy(model=model, dataset=dataset, seed=seed, gamma=0.5),
         MaxUncertaintyStrategy(model=model, dataset=dataset, beta=0.5, gamma=0.5, plot_all_scores=False),
         MutualInformationGridStrategy(model=model, dataset=dataset, seed=seed, plot_all_scores=False, max_pool_subset=50),
