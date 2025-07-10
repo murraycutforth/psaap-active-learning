@@ -21,7 +21,6 @@ from pyDOE import lhs
 from src.utils_plotting import plot_bfgpc_predictions, plot_bf_training_data
 from src.active_learning.util_classes import BiFidelityModel
 
-import pdb
 
 logger = logging.getLogger(__name__)
 
@@ -217,11 +216,6 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
 
             q_f_h_predict = gpytorch.distributions.MultivariateNormal(mean_fh_predict,
                                                                       torch.diag_embed(var_fh_predict))
-
-            # Get predictive probabilities from the HF likelihood
-            # hf_likelihood(q_f_h_predict) returns a torch.distributions.Bernoulli
-            # .mean of Bernoulli is the probability of class 1
-            # predictive_probs_hf = self.hf_likelihood(q_f_h_predict).mean
 
         if return_lf:
             if num_samples is not None:
