@@ -57,8 +57,8 @@ def main():
     )
 
     strategies = [
-        BatchBALDBMFALStrategy(model=model, dataset=dataset, seed=seed, max_pool_subset=50),
         RandomStrategy(model=model, dataset=dataset, seed=seed, gamma=0.5),
+        BatchBALDBMFALStrategy(model=model, dataset=dataset, seed=seed, num_mc_samples=20, max_pool_subset=50),
         MaxUncertaintyStrategy(model=model, dataset=dataset, beta=0.5, gamma=0.5, plot_all_scores=False),
         MutualInformationGridStrategy(model=model, dataset=dataset, seed=seed, plot_all_scores=False, max_pool_subset=50),
     ]

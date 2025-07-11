@@ -131,9 +131,9 @@ class BatchBALDBMFALStrategy(BiFidelityBatchALStrategy):
         # 1. we need p(y_i|x_i,w) for each x_i in the current batch: y_i|x_i \sim Bernoulli(w), w\sim \Phi(f(x_i))
         # TODO: can add a parameter to specifiy how many MC samples to draw
         theta_lf = current_model_trained.predict_lf(torch.from_numpy(X_lf_cand_pool).float(), 
-                                                    num_samples=20)
+                                                    num_samples=self.num_mc_samples)
         theta_hf = current_model_trained.forward(torch.from_numpy(X_hf_cand_pool).float(), 
-                                                     num_samples=20, 
+                                                     num_samples=self.num_mc_samples, 
                                                      return_lf=False)["hf_samples"]
 
 
