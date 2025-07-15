@@ -23,6 +23,7 @@ from pyDOE import lhs
 from src.utils_plotting import plot_bfgpc_predictions, plot_bf_training_data
 from src.active_learning.util_classes import BiFidelityModel
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -212,7 +213,7 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
 
         return neg_elbo + l2_reg
 
-    def forward(self, x_predict):
+    def forward(self, x_predict, num_samples=None, return_lf=False):
         """
         Makes predictions for the high-fidelity output at new input points x_predict.
         This method is typically called after training.
@@ -250,12 +251,24 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
             q_f_h_predict = gpytorch.distributions.MultivariateNormal(mean_fh_predict,
                                                                       torch.diag_embed(var_fh_predict))
 
-            # Get predictive probabilities from the HF likelihood
-            # hf_likelihood(q_f_h_predict) returns a torch.distributions.Bernoulli
-            # .mean of Bernoulli is the probability of class 1
-            predictive_probs_hf = self.hf_likelihood(q_f_h_predict).mean
-
-        return predictive_probs_hf
+        if return_lf:
+            if num_samples is not None:
+                results = {"hf_samples": self.hf_likelihood(q_f_h_predict.sample(torch.Size([num_samples]))),
+                           "lf_samples": self.lf_likelihood(q_f_l_at_xpredict.sample(torch.Size([num_samples]))),
+                           "hf_mean": self.hf_likelihood(q_f_h_predict).mean,
+                           "lf_mean": self.lf_likelihood(q_f_l_at_xpredict).mean}
+                return results
+            else:
+                results = {"hf_mean": self.hf_likelihood(q_f_h_predict).mean,
+                           "lf_mean": self.lf_likelihood(q_f_l_at_xpredict).mean}
+                return results
+        else:
+            if num_samples is not None:
+                results = {"hf_samples": self.hf_likelihood(q_f_h_predict.sample(torch.Size([num_samples]))),
+                           "hf_mean": self.hf_likelihood(q_f_h_predict).mean}
+                return results
+            else:
+                return self.hf_likelihood(q_f_h_predict).mean
 
     def predict_hf_prob(self, x_predict):
         if not torch.is_tensor(x_predict):
@@ -296,6 +309,20 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
             output_probs = gpytorch.distributions.base_distributions.Normal(0, 1).cdf(q_samples)
 
         return output_probs.var(dim=0).detach().numpy()
+
+
+    def predict_lf(self, x_predict, num_samples=None):
+        """
+        Predicts P(Y_L=1 | x_eval)
+        x_eval: points at which to evaluate the LF prediction
+        """
+        if num_samples is None:
+            q_f_l_at_xpredict = self.lf_model(x_predict)
+            return self.lf_likelihood(q_f_l_at_xpredict).mean
+        else:
+            q_f_l_at_xpredict = self.lf_model(x_predict).sample(torch.Size([num_samples]))
+            return self.lf_likelihood(q_f_l_at_xpredict)
+
 
     def predict_f_H(self, x_predict):
         """
