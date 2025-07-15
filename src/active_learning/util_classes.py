@@ -62,7 +62,7 @@ class ALExperimentConfig:
     N_test: int = 10_000
     train_lr: float = 0.01
     train_epochs: int = 500
-    random_seed: Optional[int] = None
+    random_seed: int = 42
     N_reps: int = 5
     model_args: dict[str, Any] = field(default_factory=lambda: dict())
 

@@ -22,9 +22,6 @@ class ALExperimentRunner():
         self.config = config
         self.strategy_name_str = str(self.al_strategy)
 
-        if self.config.random_seed is not None:
-            np.random.seed(self.config.random_seed)
-
         self.outdir = get_project_root() / "output" / "active_learning" / self.dataset.name / f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.strategy_name_str}"
         self.outdir.mkdir(parents=True)
 
@@ -50,7 +47,6 @@ class ALExperimentRunner():
     def _generate_lhs_samples(self, n_samples: int) -> np.ndarray:
         assert n_samples > 0
         # Use the global seed for LHS if specific random_state is not used by all criteria.
-        # For 'maximin', random_state is used.
         samples_unit_hypercube = pyDOE.lhs(2, samples=n_samples)
         scaled_samples = np.zeros_like(samples_unit_hypercube)
         for i in range(2):
@@ -64,6 +60,7 @@ class ALExperimentRunner():
         self.logger.info("Starting experiment run...")
 
         # 1. Generate fixed Test Data for ELPP evaluation
+        np.random.seed(self.config.random_seed)
         X_test = self._generate_lhs_samples(self.config.N_test)
         Y_test = self.dataset.sample_HF(X_test)
 
@@ -80,6 +77,7 @@ class ALExperimentRunner():
             all_X_HF = []
 
             # 2. Initial Data
+            np.random.seed(run_iter)  # All methods get the same initial training data
             X_L_train = self._generate_lhs_samples(self.config.N_L_init)
             Y_L_train = self.dataset.sample_LF(X_L_train) if self.config.N_L_init > 0 else np.empty((0, 1))
 

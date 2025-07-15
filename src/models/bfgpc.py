@@ -669,8 +669,6 @@ if __name__ == '__main__':
     import numpy as np
 
     os.makedirs("../output_plots_bfgpc", exist_ok=True)
-    torch.manual_seed(42)
-    np.random.seed(42)
 
     # Define synthetic 2D multi-fidelity classification problem
     lb_ex = np.array([0., 0.])

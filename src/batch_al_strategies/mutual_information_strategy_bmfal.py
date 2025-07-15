@@ -29,9 +29,9 @@ class MutualInformationBMFALStrategy(BiFidelityBatchALStrategy):
 
     See: "Batch Multi-Fidelity Active Learning with Budget Constraints", Li et al., 2022
     """
-    def __init__(self, dataset: BiFidelityDataset, seed=42, N_test_points=100, max_pool_subset=50, plot_all_scores: bool = False):
+    def __init__(self, dataset: BiFidelityDataset, N_test_points=100, max_pool_subset=50, plot_all_scores: bool = False):
         super().__init__(dataset)
-        self.gen = np.random.default_rng(seed=seed)
+        self.gen = np.random.default_rng()
         self.N_test_points = N_test_points
         self.max_pool_subset = max_pool_subset
         self.plot_all_scores = plot_all_scores

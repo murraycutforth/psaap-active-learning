@@ -11,6 +11,8 @@ from src.problems.toy_example import create_smooth_change_linear
 
 logging.basicConfig(level=logging.INFO)
 
+# TODO: extend to other datasets, and expose various script args as cmd args
+
 linear_low_f1, linear_high_f1, p_LF_toy, p_HF_toy = create_smooth_change_linear()
 
 
@@ -27,8 +29,6 @@ def sampling_function_H(X_normalized):
 
 
 def main():
-    seed = 42
-
     dataset = BiFidelityDataset(sample_LF=sampling_function_L, sample_HF=sampling_function_H,
                                 true_p_LF=p_LF_toy, true_p_HF=p_HF_toy,
                                 name='ToyLinear', c_LF=0.1, c_HF=1.0)
@@ -41,17 +41,18 @@ def main():
         N_cand_HF=500,
         train_epochs=100,
         train_lr=0.1,
-        N_reps=25,
+        N_reps=30,
         model_args={'n_inducing_pts': 256},
     )
 
     strategies = [
-        #RandomStrategy(dataset=dataset, seed=seed, gamma=0.5),
-        #MaxUncertaintyStrategy(dataset=dataset, beta=0.5, gamma=0.5, plot_all_scores=False),
-        MutualInformationBMFALStrategy(dataset=dataset, seed=seed, plot_all_scores=False, max_pool_subset=50),
-        MutualInformationBMFALNweightedStrategy(dataset=dataset, seed=seed, plot_all_scores=False,
-                                                max_pool_subset=50,
+        RandomStrategy(dataset=dataset, gamma=0.5),
+        MaxUncertaintyStrategy(dataset=dataset, beta=0.5, gamma=0.5, plot_all_scores=False),
+        MutualInformationBMFALStrategy(dataset=dataset, plot_all_scores=False, max_pool_subset=50),
+        MutualInformationBMFALNweightedStrategy(dataset=dataset, plot_all_scores=False,
                                                 max_N=10, jitter_scale=0.002, sigma_reduction_prop=0.9),
+        MutualInformationBMFALNweightedStrategy(dataset=dataset, plot_all_scores=False,
+                                                max_N=10, jitter_scale=0.002, sigma_reduction_prop=0.95),
         #MutualInformationBMFALObservables(model=model, dataset=dataset, seed=seed, plot_all_scores=True,
         #                                  max_pool_subset=50, M=100, K=100)
     ]

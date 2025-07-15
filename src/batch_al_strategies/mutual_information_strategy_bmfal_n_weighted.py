@@ -22,12 +22,12 @@ class MutualInformationBMFALNweightedStrategy(MutualInformationBMFALStrategy):
     some pre-set threshold, and then weight the MI improvement by the number of trials. In essence, this approach modifies
     the cost of each proposal to also account for the number of trials needed, as well as the fidelity.
     """
-    def __init__(self, dataset: BiFidelityDataset, seed=42, N_test_points=100, max_pool_subset=50, plot_all_scores: bool = False,
+    def __init__(self, dataset: BiFidelityDataset, N_test_points=100, max_pool_subset=50, plot_all_scores: bool = False,
                  max_N: int = 10, jitter_scale: float = 0.002, sigma_reduction_prop: float = 0.9):
         self.max_N = max_N
         self.jitter_scale = jitter_scale
         self.sigma_reduction_prop = sigma_reduction_prop
-        super().__init__(dataset, seed, N_test_points, max_pool_subset, plot_all_scores)
+        super().__init__(dataset, N_test_points, max_pool_subset, plot_all_scores)
 
     def __str__(self):
         return f'MutualInformationBMFALSNWeightedtrategy(maxN={self.max_N},jitter={self.jitter_scale},sigma_reduction_prop={self.sigma_reduction_prop})'
