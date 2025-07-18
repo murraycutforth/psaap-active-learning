@@ -5,6 +5,7 @@ import logging
 import numpy as np
 import pandas as pd
 import pyDOE
+import torch
 
 from src.active_learning.util_classes import BiFidelityModel, BiFidelityDataset, ALExperimentConfig
 from src.batch_al_strategies.base import BiFidelityBatchALStrategy
@@ -61,6 +62,8 @@ class ALExperimentRunner():
 
         # 1. Generate fixed Test Data for ELPP evaluation
         np.random.seed(self.config.random_seed)
+        torch.manual_seed(self.config.random_seed)
+
         X_test = self._generate_lhs_samples(self.config.N_test)
         Y_test = self.dataset.sample_HF(X_test)
 
@@ -78,6 +81,8 @@ class ALExperimentRunner():
 
             # 2. Initial Data
             np.random.seed(run_iter)  # All methods get the same initial training data
+            torch.manual_seed(run_iter)
+
             X_L_train = self._generate_lhs_samples(self.config.N_L_init)
             Y_L_train = self.dataset.sample_LF(X_L_train) if self.config.N_L_init > 0 else np.empty((0, 1))
 

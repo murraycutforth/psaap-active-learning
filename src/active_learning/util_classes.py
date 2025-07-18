@@ -34,6 +34,10 @@ class BiFidelityModel(ABC):
         pass
 
     @abstractmethod
+    def predict_lf_prob(self, x_predict):
+        pass
+
+    @abstractmethod
     def predict_hf_prob_var(self, x_predict):
         pass
 

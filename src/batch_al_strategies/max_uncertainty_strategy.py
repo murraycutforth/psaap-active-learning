@@ -44,7 +44,7 @@ class MaxUncertaintyStrategy(BiFidelityBatchALStrategy):
             beta (float, optional): A weighting factor for the data uncertainty (entropy)
                 term in the acquisition score. Defaults to 1.0.
             gamma (float, optional): The fraction of the total budget to be allocated
-                to high-fidelity queries. Must be between 0 and 1. Defaults to 0.2.
+                to high-fidelity queries. Must be between 0 and 1.
         """
         super().__init__(dataset)
         if not 0 <= gamma <= 1:
@@ -65,8 +65,6 @@ class MaxUncertaintyStrategy(BiFidelityBatchALStrategy):
             return np.array([])
 
         prob_means, prob_vars = model.predict_hf_prob(X_cand), model.predict_hf_prob_var(X_cand)
-
-        logger.info(f"Computed prob_means: {prob_means.shape}, prob_vars: {prob_vars.shape}")
 
         # 1. Model Uncertainty (Epistemic)
         model_uncertainty = prob_vars
@@ -117,8 +115,6 @@ class MaxUncertaintyStrategy(BiFidelityBatchALStrategy):
             best_idx = np.argmax(scores)
             return [best_idx]
 
-        print(X_pool.shape)
-
         if np.isnan(X_pool).any():
             print("Your data contains NaN values!")
 
@@ -127,8 +123,6 @@ class MaxUncertaintyStrategy(BiFidelityBatchALStrategy):
 
         kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=5, max_iter=500, verbose=0)
         kmeans.fit(X_pool)
-
-        logger.info("KMeans clustering done.")
 
         selected_indices = []
         for i in range(n_clusters):

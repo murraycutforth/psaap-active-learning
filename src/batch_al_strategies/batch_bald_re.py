@@ -83,15 +83,16 @@ class BatchBALDBMFALStrategy(BiFidelityBatchALStrategy):
     The expected conditional entropy is computed by Monte Carlo integration over the latent function values.
 
     The acquisition function is then used to select the next batch of points to evaluate.
+
+    - Points are selected sequentially from each fidelity under this implementation, resulting
+    in an equal number of HF and LF points under any given budget
     """
 
-    def __init__(self, model: BiFidelityModel, 
+    def __init__(self,
                  dataset: BiFidelityDataset, 
                  num_mc_samples:int=20,
-                 seed:int=42, 
                  max_pool_subset:int=50):
-        super().__init__(model, dataset)
-        self.gen = np.random.default_rng(seed=seed)
+        super().__init__(dataset)
         self.max_pool_subset = max_pool_subset
         self.num_mc_samples = num_mc_samples
 

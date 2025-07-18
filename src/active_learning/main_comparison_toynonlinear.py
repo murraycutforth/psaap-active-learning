@@ -2,6 +2,9 @@ import logging
 
 from src.active_learning.batch_active_learning_experiment_runner import ALExperimentRunner
 from src.active_learning.util_classes import BiFidelityDataset, ALExperimentConfig
+from src.batch_al_strategies.batch_bald_re import BatchBALDBMFALStrategy
+from src.batch_al_strategies.mutual_information_strategy_bernoulli_p_with_repeats import \
+    MutualInformationBernoulliPRepeatsStrategy
 from src.batch_al_strategies.mutual_information_strategy_bmfal_n_weighted import MutualInformationBMFALNweightedStrategy
 from src.models.bfgpc import BFGPC_ELBO
 from src.batch_al_strategies.random_strategy import RandomStrategy
@@ -27,38 +30,36 @@ def sampling_function_H(X_normalized):
 
 
 def main():
-    seed = 42
-
-    model = BFGPC_ELBO(n_inducing_pts=256)
-
     dataset = BiFidelityDataset(sample_LF=sampling_function_L, sample_HF=sampling_function_H,
                                 true_p_LF=p_LF_toy, true_p_HF=p_HF_toy,
                                 name='ToyNonLinear', c_LF=0.1, c_HF=1.0)
 
     base_config = ALExperimentConfig(
-        N_L_init=500,
-        N_H_init=50,
+        N_L_init=50,
+        N_H_init=25,
         cost_constraints=[100] * 5,
-        N_cand_LF=5000,
-        N_cand_HF=500,
+        N_cand_LF=2000,
+        N_cand_HF=2000,
         train_epochs=100,
         train_lr=0.1,
         N_reps=20,
+        model_args={'n_inducing_pts': 256},
     )
 
     strategies = [
-        RandomStrategy(model=model, dataset=dataset, seed=seed, gamma=0.5),
-        MaxUncertaintyStrategy(model=model, dataset=dataset, beta=0.5, gamma=0.5, plot_all_scores=False),
-        MutualInformationBMFALStrategy(model=model, dataset=dataset, seed=seed, plot_all_scores=False, max_pool_subset=50),
-        MutualInformationBMFALNweightedStrategy(model=model, dataset=dataset, seed=seed, plot_all_scores=False,
-                                                max_pool_subset=50,
-                                                max_N=10, jitter_scale=0.002, sigma_reduction_prop=0.9),
-        #MutualInformationBMFALObservables(model=model, dataset=dataset, seed=seed, plot_all_scores=False,
+        #RandomStrategy(dataset=dataset, gamma=0.9),
+        MaxUncertaintyStrategy(dataset=dataset, beta=0.5, gamma=0.9, plot_all_scores=False),
+        #MutualInformationBMFALStrategy(dataset=dataset, plot_all_scores=False, max_pool_subset=50),
+        #MutualInformationBMFALNweightedStrategy(dataset=dataset, plot_all_scores=False,
+        #                                        max_N=10, jitter_scale=0.002, sigma_reduction_prop=0.95),
+        #MutualInformationBMFALObservables(model=model, dataset=dataset, seed=seed, plot_all_scores=True,
         #                                  max_pool_subset=50, M=100, K=100)
+        #BatchBALDBMFALStrategy(dataset=dataset, num_mc_samples=20, max_pool_subset=50),
+        #MutualInformationBernoulliPRepeatsStrategy(N_test_points=50, dataset=dataset, Nmax=5, repeat_jitter=0.01),
     ]
 
     for strategy in strategies:
-        experiment = ALExperimentRunner(model, dataset, strategy, base_config)
+        experiment = ALExperimentRunner(dataset, strategy, base_config)
         experiment.run_experiment()
 
 
