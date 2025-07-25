@@ -46,7 +46,7 @@ def main():
     N_test = 10_000
     lr = 0.1
     l2_reg = 0.01
-    N_reps = 3
+    N_reps = 5
 
     num_nl = len(N_L_values)
     num_nh = len(N_H_values)
