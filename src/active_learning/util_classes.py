@@ -1,7 +1,7 @@
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Callable, Optional, Any
 
 import gpytorch
 import torch
@@ -30,11 +30,15 @@ class BiFidelityModel(ABC):
         pass
 
     @abstractmethod
-    def predict_prob_mean(self, x_predict):
+    def predict_hf_prob(self, x_predict):
         pass
 
     @abstractmethod
-    def predict_prob_var(self, x_predict):
+    def predict_lf_prob(self, x_predict):
+        pass
+
+    @abstractmethod
+    def predict_hf_prob_var(self, x_predict):
         pass
 
 
@@ -55,19 +59,18 @@ class ALExperimentConfig:
     """Settings for initialising a bi fidelity batch active learning experiment"""
     N_L_init: int
     N_H_init: int
-    cost_constraints: list[float]
-    N_cand_LF: int
-    N_cand_HF: int
+    cost_constraints: list[float] = field(default_factory=lambda: [])
+    N_cand_LF: int = 500
+    N_cand_HF: int = 500
     domain_bounds: list[tuple[float, float]] = field(default_factory=lambda: [(0, 1), (0, 1)])
-    N_test: int = 1000
+    N_test: int = 10_000
     train_lr: float = 0.01
     train_epochs: int = 500
-    random_seed: Optional[int] = None
+    random_seed: int = 42
     N_reps: int = 5
+    model_args: dict[str, Any] = field(default_factory=lambda: dict())
 
     def __post_init__(self):
-        if not self.cost_constraints:
-            raise ValueError("cost_constraints list cannot be empty.")
         if any(self.cost_constraints[i] > self.cost_constraints[i + 1] for i in range(len(self.cost_constraints) - 1)):
             logging.warning(
                 "cost_constraints are not monotonically increasing. This might lead to unexpected behavior.")

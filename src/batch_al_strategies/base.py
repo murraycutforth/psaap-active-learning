@@ -9,8 +9,7 @@ from src.active_learning.util_classes import BiFidelityModel, BiFidelityDataset,
 class BiFidelityBatchALStrategy(ABC):
     """Core logic used to select a batch of points
     """
-    def __init__(self, model: BiFidelityModel, dataset: BiFidelityDataset):
-        self.model = model
+    def __init__(self, dataset: BiFidelityDataset):
         self.dataset = dataset
 
     @abstractmethod

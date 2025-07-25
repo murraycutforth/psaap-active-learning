@@ -2,7 +2,7 @@
 # binary.
 
 
-from src.toy_example import create_smooth_change_linear
+from src.problems.toy_example import create_smooth_change_linear
 
 
 import unittest
@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from pyDOE import lhs
 
-from src.bfgpc import BFGPC_ELBO
+from src.models.bfgpc import BFGPC_ELBO
 from src.utils_plotting import plot_bfgpc_predictions, plot_bf_training_data, plot_bfgpc_predictions_two_axes
 
 linear_low_f1, linear_high_f1 = create_smooth_change_linear()
