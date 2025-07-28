@@ -32,10 +32,20 @@ def sampling_function_H(X_normalized):
     return Y_linear_high_grid
 
 
-def main():
+def main(model_name):
     dataset = BiFidelityDataset(sample_LF=sampling_function_L, sample_HF=sampling_function_H,
-                                true_p_LF=p_LF_toy, true_p_HF=p_HF_toy,
-                                name='ToyLinear', c_LF=0.1, c_HF=1.0)
+                            true_p_LF=p_LF_toy, true_p_HF=p_HF_toy,
+                            name='ToyNonLinear', c_LF=0.1, c_HF=1.0)
+
+    if model_name == 'BFGPC_ELBO':
+        model_args = {'n_inducing_pts': 256}
+        train_epochs = 100
+    elif model_name == 'BFDGPC':
+        model_args = {'input_dims': 2, 
+                    'num_inducing_low': 256, 
+                    'num_inducing_high': 128, 
+                    'l2_reg_lambda': 1}
+        train_epochs = 150
 
     base_config = ALExperimentConfig(
         N_L_init=50,
@@ -43,15 +53,16 @@ def main():
         cost_constraints=[100] * 5,
         N_cand_LF=2000,
         N_cand_HF=2000,
-        train_epochs=100,
+        train_epochs=train_epochs,
         train_lr=0.1,
         N_reps=20,
-        model_args={'n_inducing_pts': 256},
+        model_name=model_name,
+        model_args=model_args,
     )
 
     strategies = [
-        #RandomStrategy(dataset=dataset, gamma=0.9),
-        MaxUncertaintyStrategy(dataset=dataset, beta=0.5, gamma=0.9, plot_all_scores=False),
+        RandomStrategy(dataset=dataset, gamma=0.9),
+        #MaxUncertaintyStrategy(dataset=dataset, beta=0.5, gamma=0.9, plot_all_scores=False),
         #MutualInformationBMFALStrategy(dataset=dataset, plot_all_scores=False, max_pool_subset=50),
         #MutualInformationBMFALNweightedStrategy(dataset=dataset, plot_all_scores=False,
         #                                        max_N=10, jitter_scale=0.002, sigma_reduction_prop=0.95),
@@ -68,4 +79,8 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model_name', type=str, default='BFGPC_ELBO', choices=['BFGPC_ELBO', 'BFDGPC'])
+    args = parser.parse_args()
+    main(args.model_name)

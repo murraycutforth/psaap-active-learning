@@ -129,6 +129,9 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
         # Likelihoods for classification (maps latent GP to binary probability)
         self.lf_likelihood = gpytorch.likelihoods.BernoulliLikelihood()
         self.hf_likelihood = gpytorch.likelihoods.BernoulliLikelihood()
+        
+    def __repr__(self):
+        return f"BFGPC_ELBO"
 
     def _calculate_elbo_terms(self, x_l, y_l, x_h, y_h):
         """
