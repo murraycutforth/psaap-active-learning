@@ -15,10 +15,10 @@ class MockModel(BiFidelityModel):
     """A mock BiFidelityModel that implements all abstract methods."""
 
     # Methods used by MUDStrategy
-    def predict_prob_mean(self, X):
+    def predict_hf_prob(self, X):
         pass  # Behavior will be mocked in each test
 
-    def predict_prob_var(self, X):
+    def predict_hf_prob_var(self, X):
         pass  # Behavior will be mocked in each test
 
     # --- Dummy implementations to satisfy the abstract base class contract ---
@@ -105,8 +105,8 @@ class TestMUDStrategy(unittest.TestCase):
         mock_vars = np.array([0.2, 0.05, 0.01])
 
         # Mock the model's predictions
-        self.mock_model.predict_prob_mean = MagicMock(return_value=mock_means)
-        self.mock_model.predict_prob_var = MagicMock(return_value=mock_vars)
+        self.mock_model.predict_hf_prob = MagicMock(return_value=mock_means)
+        self.mock_model.predict_hf_prob_var = MagicMock(return_value=mock_vars)
 
         entropy_p1 = -0.1 * np.log2(0.1) - 0.9 * np.log2(0.9)
         entropy_p2 = -0.5 * np.log2(0.5) - 0.5 * np.log2(0.5)
@@ -120,8 +120,8 @@ class TestMUDStrategy(unittest.TestCase):
 
         scores = strategy._calculate_acquisition_scores(X_cand, self.mock_model)
 
-        self.mock_model.predict_prob_mean.assert_called_once_with(X_cand)
-        self.mock_model.predict_prob_var.assert_called_once_with(X_cand)
+        self.mock_model.predict_hf_prob.assert_called_once_with(X_cand)
+        self.mock_model.predict_hf_prob_var.assert_called_once_with(X_cand)
         np.testing.assert_allclose(scores, expected_scores)
 
     @patch('src.active_learning.strategies.new_strategy.KMeans')

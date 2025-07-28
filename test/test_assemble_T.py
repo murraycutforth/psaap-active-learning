@@ -1,14 +1,8 @@
-import unittest
-import torch
-
-from src.bfgpc import _assemble_T
-
-
 # test_my_module.py
 
 import unittest
 import torch
-from src.bfgpc import _assemble_T # Make sure to import from the correct file name
+from src.models.bfgpc import _assemble_T # Make sure to import from the correct file name
 
 class TestAssembleT(unittest.TestCase):
 

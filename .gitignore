@@ -4,5 +4,7 @@ output
 data
 *.pyc
 *.png
+test/output*
+
 collect_results.ipynb
 __pycache__
