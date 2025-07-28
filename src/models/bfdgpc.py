@@ -90,18 +90,31 @@ class BFDGPC(torch.nn.Module, BiFidelityModel):
             q_f_H = q_f_H.rsample(sample_shape=torch.Size([num_samples]))
         return q_f_H
 
-    def forward(self, test_x, num_samples=1, return_low=False):
+    def forward(self, test_x, num_samples=1, return_lf=False):
         self.eval()
         with torch.no_grad():
             low_output = self.predict_f_L(test_x, num_samples)
             high_output = self.predict_f_H(test_x, num_samples)
-            low_pred = self.low_likelihood(low_output)
-            high_pred = self.high_likelihood(high_output)
+            # low_pred = self.low_likelihood(low_output)
+            # high_pred = self.high_likelihood(high_output)
 
-        if return_low:
-            return low_pred.probs.mean(dim=0), high_pred.probs.mean(dim=0)
+        if return_lf:
+            if num_samples > 1:
+                results = {"hf_samples": self.high_likelihood(high_output),
+                           "lf_samples": self.low_likelihood(low_output),
+                           "hf_mean": self.high_likelihood(high_output).probs.mean(dim=0),
+                           "lf_mean": self.low_likelihood(low_output).probs.mean(dim=0)}
+            else:
+                results = {"hf_mean": self.high_likelihood(high_output).probs.mean(dim=0),
+                           "lf_mean": self.low_likelihood(low_output).probs.mean(dim=0)}
+            return results
         else:
-            return high_pred.probs.mean(dim=0)
+            if num_samples > 1:
+                results = {"hf_samples": self.high_likelihood(high_output),
+                           "hf_mean": self.high_likelihood(high_output).probs.mean(dim=0)}
+            else:
+                results = self.high_likelihood(high_output).probs.mean(dim=0)
+            return results
 
     def __repr__(self):
         return f"BFDGPC"
@@ -109,11 +122,20 @@ class BFDGPC(torch.nn.Module, BiFidelityModel):
     def predict_hf_prob(self, x_predict, num_samples=1):
         hf_probs = self.forward(x_predict, 
                             num_samples=num_samples, 
-                            return_low=False)
-        return hf_probs.mean(dim=0)
+                            return_lf=False)
+        return hf_probs.mean(dim=0).detach().numpy()
     
     def predict_lf_prob(self, x_predict, num_samples=1):
-        return self.low_likelihood(self.predict_f_L(x_predict, num_samples=num_samples)).probs.mean(dim=0)
+        if num_samples > 1:
+            return self.low_likelihood(self.predict_f_L(x_predict, num_samples=num_samples)).probs.mean(dim=0).detach().numpy()
+        else:
+            return self.low_likelihood(self.predict_f_L(x_predict)).probs.mean(dim=0).detach().numpy()
+    
+    def predict_lf(self, x_predict, num_samples=1):
+        if num_samples > 1:
+            return self.predict_f_L(x_predict, num_samples=num_samples).mean(dim=0).detach().numpy()
+        else:
+            return self.predict_f_L(x_predict).mean(dim=0).detach().numpy()
 
     
     def train_model(self, X_LF, Y_LF, X_HF, Y_HF, lr, n_epochs):
@@ -185,7 +207,8 @@ class BFDGPC(torch.nn.Module, BiFidelityModel):
         hf_probs = self.high_likelihood(q_f_H)
         return hf_probs.probs.var(dim=0).detach().numpy()
 
-    def predict_multi_fidelity_latent_joint(self, X_L: torch.tensor, 
+    def predict_multi_fidelity_latent_joint(self, 
+                                            X_L: torch.tensor, 
                                             X_H: torch.tensor, 
                                             X_prime: torch.tensor,
                                             num_samples=1,
@@ -199,7 +222,7 @@ class BFDGPC(torch.nn.Module, BiFidelityModel):
         """
         pred_probs_p1 = self.forward(X_HF_test, 
                                      num_samples=num_samples, 
-                                     return_low=False)
+                                     return_lf=False)
 
         # Ensure Y_HF_test is a torch tensor for calculations
         if not torch.is_tensor(Y_HF_test):
@@ -229,7 +252,7 @@ class BFDGPC(torch.nn.Module, BiFidelityModel):
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             test_probs = self.forward(torch.tensor(X_HF_test, dtype=torch.float), 
                                       num_samples=num_samples, 
-                                      return_low=False)
+                                      return_lf=False)
             test_probs = test_probs.mean(dim=0)
             test_labels = (test_probs > 0.5).float()
         accuracy = (test_labels == torch.tensor(Y_HF_test, dtype=torch.float32)).float().mean().item()
