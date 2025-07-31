@@ -46,9 +46,9 @@ class MutualInformationBernoulliPRepeatsStrategy(MutualInformationBernoulliPStra
 
     def select_batch(self,
                      config: ALExperimentConfig,
-                     current_model_trained: BiFidelityModel,  # Pass the currently trained model
+                     current_model_trained: BiFidelityModel,
                      budget_this_step: float
-                     ) -> tuple[np.ndarray, np.ndarray]:  # LF indices from X_LF_cand_pool, HF indices from X_HF_cand_pool
+                     ) -> tuple[np.ndarray, np.ndarray]:  # LF points, HF points
         """Greedy algorithm to select batch of runs under MI acquisition function
         """
         # New candidate pool of LHS each round

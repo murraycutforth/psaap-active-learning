@@ -40,13 +40,13 @@ def main():
     torch.manual_seed(42)
     np.random.seed(42)
 
-    N_L_values = [4, 8, 16, 32, 64, 128, 256, 512, 1024]
-    N_H_values = [4, 8, 16, 32, 64, 128, 256, 512]
+    N_L_values = [4, 8, 16, 32, 64, 128, 256]
+    N_H_values = [4, 8, 16, 32, 64, 128, 256]
 
     N_test = 10_000
     lr = 0.1
     l2_reg = 0.01
-    N_reps = 5
+    N_reps = 25
 
     num_nl = len(N_L_values)
     num_nh = len(N_H_values)
@@ -81,9 +81,10 @@ def main():
                 X_H_train = torch.tensor(X_H_init_norm_np, dtype=torch.float32)
                 Y_H_train = torch.tensor(Y_H_init_norm_np, dtype=torch.float32)
 
-                model = BFGPC_ELBO(l2_reg_lambda=l2_reg, n_inducing_pts=max(len(X_L_train), len(X_H_train)) // 2)
+                model = BFGPC_ELBO(l2_reg_lambda=l2_reg, n_inducing_pts=max(len(X_L_train), len(X_H_train)))
                 model.train_model(X_L_train, Y_L_train, X_H_train, Y_H_train,
-                              lr=lr, n_epochs=max(len(X_L_train), len(X_H_train)) // 2)
+                                  lr=lr, n_epochs=100)
+                              #lr=lr, n_epochs=max(len(X_L_train), len(X_H_train)) // 2)
 
                 elpp = model.evaluate_elpp(X_test_norm_np, Y_test_H_norm_np)
                 _elpps.append(elpp)
@@ -100,7 +101,7 @@ def main():
              xlabel="Number of High-Fidelity Points",
              ylabel="Number of Low-Fidelity Points",
              xticklabels=nh_labels, yticklabels=nl_labels,
-             figname=output_dir / f"elpp_varepochs_l2{l2_reg}.png",
+             figname=output_dir / f"elpp_100epochs_l2{l2_reg}.png",
              val_fmt="{x:.3f}")
 
 
