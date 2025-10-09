@@ -8,3 +8,5 @@ test/output*
 
 collect_results.ipynb
 __pycache__
+*.pdf
+.ipynb_checkpoints

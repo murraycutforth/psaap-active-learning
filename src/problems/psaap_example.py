@@ -16,7 +16,27 @@ from src.paths import get_project_root
 
 
 def load_all_lf_data():
-    filepaths = ['01_2M(1).npz', '02_2M(1).npz']
+    filepaths = ['01_2M.npz', '02_2M.npz', '03_2M.npz', '04_2M.npz']
+    #filepaths = ['01_2M.npz'] # '02_2M.npz', '03_2M.npz', '04_2M.npz']
+    all_xs = []
+    all_ys = []
+    for filepath in filepaths:
+        data = np.load(get_project_root() / "data" / filepath)
+        x = data["xis"][:, [2, 4]].astype(np.float32)
+        y = data["chis"]
+        all_xs.append(x)
+        all_ys.append(y)
+
+    xs = np.concatenate(all_xs, axis=0)
+    ys = np.concatenate(all_ys, axis=0)
+
+    return xs / np.array([[15, 100]]), ys
+
+
+def load_hf_test_data():
+    filepaths = ['test_01_15M.npz', 'test_02_15M.npz']
+    filepaths = ['04_15M.npz', '02_15M.npz', 'test_01_15M.npz', 'test_02_15M.npz']
+
     all_xs = []
     all_ys = []
     for filepath in filepaths:
@@ -33,7 +53,9 @@ def load_all_lf_data():
 
 
 def load_all_hf_data():
-    filepaths = ['01_15M(1).npz', 'test_01_15M.npz', 'test_02_15M.npz']
+    #filepaths = ['01_15M(1).npz', 'test_01_15M.npz', 'test_02_15M.npz']
+    filepaths = ['01_15M.npz', '02_15M.npz', '03_15M.npz', '04_15M.npz']
+    #filepaths = ['01_15M.npz'] #, '02_15M.npz', '03_15M.npz', '04_15M.npz']
     all_xs = []
     all_ys = []
     for filepath in filepaths:
@@ -61,7 +83,7 @@ def train_model():
     Y_lf = torch.from_numpy(Y_lf).float()
     Y_hf = torch.from_numpy(Y_hf).float()
 
-    model = BFGPC_ELBO(X_lf, X_hf)
+    model = BFGPC_ELBO(n_inducing_pts=256)
     model.train_model(X_lf, Y_lf, X_hf, Y_hf, n_epochs=100)
     return model
 

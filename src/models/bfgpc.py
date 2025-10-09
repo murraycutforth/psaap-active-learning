@@ -12,6 +12,7 @@
 import copy
 import logging
 
+from tqdm import tqdm
 import pyDOE
 import torch
 import numpy as np
@@ -505,7 +506,7 @@ class BFGPC_ELBO(torch.nn.Module, BiFidelityModel):
             self.train()
 
             # The actual training loop for one initialization
-            for epoch in range(n_epochs):
+            for epoch in tqdm(range(n_epochs)):
                 optimizer.zero_grad()
                 loss = self._calculate_loss(X_LF, Y_LF, X_HF, Y_HF)
                 loss.backward()
