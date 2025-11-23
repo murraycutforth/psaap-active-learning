@@ -6,6 +6,8 @@ import gpytorch
 import pandas as pd
 import torch
 
+import pdb
+
 logger = logging.getLogger(__name__)
 
 
@@ -93,16 +95,41 @@ def plot_bfgpc_predictions_two_axes(model, grid_res=100, X_LF=None, Y_LF=None, X
         # Predictions of latents
         predicted_f_L = model.predict_f_L(grid_points_torch)
         predicted_f_H = model.predict_f_H(grid_points_torch)
-        predicted_delta = model.predict_delta(grid_points_torch)
 
+        if hasattr(model, 'predict_delta'):
+            predicted_delta = model.predict_delta(grid_points_torch)
+        else:
+            predicted_delta = None
+    
     predicted_probs_lf_grid_reshaped = predicted_probs_lf_grid.reshape(grid_res, grid_res)
     predicted_probs_hf_grid_reshaped = predicted_probs_hf_grid.reshape(grid_res, grid_res)
-    predicted_f_L_mean_grid = predicted_f_L.mean.numpy().reshape(grid_res, grid_res)
-    predicted_f_H_mean_grid = predicted_f_H.mean.numpy().reshape(grid_res, grid_res)
-    predicted_f_L_var_grid = predicted_f_L.variance.numpy().reshape(grid_res, grid_res)
-    predicted_f_H_var_grid = predicted_f_H.variance.numpy().reshape(grid_res, grid_res)
-    predicted_delta_mean_grid = predicted_delta.mean.numpy().reshape(grid_res, grid_res)
-    predicted_delta_var_grid = predicted_delta.variance.numpy().reshape(grid_res, grid_res)
+
+    predicted_f_L_mean = predicted_f_L.mean.numpy()
+    predicted_f_H_mean = predicted_f_H.mean.numpy()
+    predicted_f_L_var = predicted_f_L.variance.numpy()
+    predicted_f_H_var = predicted_f_H.variance.numpy()
+
+
+    if predicted_f_L_mean.ndim == 2:
+        predicted_f_L_mean = predicted_f_L_mean.mean(axis=0)
+    if predicted_f_H_mean.ndim == 2:
+        predicted_f_H_mean = predicted_f_H_mean.mean(axis=0)
+    if predicted_f_L_var.ndim == 2:
+        predicted_f_L_var = predicted_f_L_var.mean(axis=0)
+    if predicted_f_H_var.ndim == 2:
+        predicted_f_H_var = predicted_f_H_var.mean(axis=0)
+
+    predicted_f_L_mean_grid = predicted_f_L_mean.reshape(grid_res, grid_res)
+    predicted_f_H_mean_grid = predicted_f_H_mean.reshape(grid_res, grid_res)
+    predicted_f_L_var_grid = predicted_f_L_var.reshape(grid_res, grid_res)
+    predicted_f_H_var_grid = predicted_f_H_var.reshape(grid_res, grid_res)
+
+    if predicted_delta is not None:
+        predicted_delta_mean_grid = predicted_delta.mean.numpy().reshape(grid_res, grid_res)
+        predicted_delta_var_grid = predicted_delta.variance.numpy().reshape(grid_res, grid_res)
+    else:
+        predicted_delta_mean_grid = np.zeros((grid_res, grid_res))
+        predicted_delta_var_grid = np.zeros((grid_res, grid_res))
 
     # Plotting results
     fig, axes = plt.subplots(3, 3, figsize=(11, 9), dpi=200, sharex=True, sharey=True) # sharex/sharey can be useful

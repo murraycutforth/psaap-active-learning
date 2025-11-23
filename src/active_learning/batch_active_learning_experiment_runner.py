@@ -10,6 +10,7 @@ import torch
 from src.active_learning.util_classes import BiFidelityModel, BiFidelityDataset, ALExperimentConfig
 from src.batch_al_strategies.base import BiFidelityBatchALStrategy
 from src.models.bfgpc import BFGPC_ELBO
+from src.models.bfdgpc import BFDGPC
 from src.utils_plotting import plot_bf_training_data, plot_bfgpc_predictions_two_axes, plot_active_learning_training_data, plot_al_summary_from_dataframe_mpl
 from src.paths import get_project_root
 
@@ -23,7 +24,7 @@ class ALExperimentRunner():
         self.config = config
         self.strategy_name_str = str(self.al_strategy)
 
-        self.outdir = get_project_root() / "output" / "active_learning" / self.dataset.name / f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.strategy_name_str}"
+        self.outdir = get_project_root() / "output" / "active_learning" / self.dataset.name/ self.config.model_name / f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{self.strategy_name_str}"
         self.outdir.mkdir(parents=True)
 
         # Setup logging
@@ -102,13 +103,21 @@ class ALExperimentRunner():
 
             # 5. Initial Model Training and Evaluation (Round 0)
             self.logger.info("Training initial model...")
-            model = BFGPC_ELBO(**self.config.model_args)
+            if self.config.model_name == "BFGPC_ELBO":
+                model = BFGPC_ELBO(**self.config.model_args)
+            elif self.config.model_name == "BFDGPC":
+                model = BFDGPC(**self.config.model_args)
+            else:
+                raise ValueError(f"Invalid model name: {self.config.model_args['model_name']}")
+
             model.train_model(X_L_train, Y_L_train, X_H_train, Y_H_train, self.config.train_lr, self.config.train_epochs)
 
             elpp_round_0 = model.evaluate_elpp(X_test, Y_test)
             self.logger.info(f"Round 0: ELPP = {elpp_round_0:.4f}, Cost = {current_total_cost:.2f}")
 
             pred_mean_p_HF = model.predict_hf_prob(X_test)
+            if isinstance(pred_mean_p_HF, torch.Tensor):
+                pred_mean_p_HF = pred_mean_p_HF.numpy()
             mse = np.mean((pred_mean_p_HF - p_HF_test_true) ** 2)
 
             plot_bfgpc_predictions_two_axes(model=model, true_p_LF=self.dataset.true_p_LF, true_p_HF=self.dataset.true_p_HF,
@@ -173,7 +182,12 @@ class ALExperimentRunner():
 
                 # Retrain model
                 self.logger.info(f"Retraining model with new dataset of size {X_L_train.shape[0]} and {X_H_train.shape[0]}.")
-                model = BFGPC_ELBO(**self.config.model_args)
+                if self.config.model_name == "BFGPC_ELBO":
+                    model = BFGPC_ELBO(**self.config.model_args)
+                elif self.config.model_name == "BFDGPC":
+                    model = BFDGPC(**self.config.model_args)
+                else:
+                    raise ValueError(f"Invalid model name: {self.config.model_args['model_name']}")
                 model.train_model(X_L_train, Y_L_train, X_H_train, Y_H_train, self.config.train_lr, self.config.train_epochs)
 
                 # Evaluate ELPP
@@ -183,7 +197,9 @@ class ALExperimentRunner():
 
                 # Evaluate MSE of mean probability
                 pred_mean_p_HF = model.predict_hf_prob(X_test)
-                mse = np.mean((pred_mean_p_HF - p_HF_test_true)**2)
+                if isinstance(pred_mean_p_HF, torch.Tensor):
+                    pred_mean_p_HF = pred_mean_p_HF.numpy()
+                mse = np.mean((pred_mean_p_HF - p_HF_test_true) ** 2)
                 self.logger.info(f"MSE = {mse:.4f}")
 
                 results_history.append({

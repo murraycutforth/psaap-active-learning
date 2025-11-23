@@ -131,15 +131,25 @@ class BatchBALDBMFALStrategy(BiFidelityBatchALStrategy):
         
         # 1. we need p(y_i|x_i,w) for each x_i in the current batch: y_i|x_i \sim Bernoulli(w), w\sim \Phi(f(x_i))
         # TODO: can add a parameter to specifiy how many MC samples to draw
-        theta_lf = current_model_trained.predict_lf(torch.from_numpy(X_lf_cand_pool).float(), 
-                                                    num_samples=20)
-        theta_hf = current_model_trained.forward(torch.from_numpy(X_hf_cand_pool).float(), 
-                                                     num_samples=20, 
-                                                     return_lf=False)["hf_samples"]
+        # theta_lf = current_model_trained.predict_lf(torch.from_numpy(X_lf_cand_pool).float(), 
+        #                                             num_samples=self.num_mc_samples)
+        res = current_model_trained.forward(torch.from_numpy(X_hf_cand_pool).float(), 
+                                                     num_samples=self.num_mc_samples, 
+                                                     return_lf=True)
+        
+        theta_lf = res["lf_samples"].probs
+        theta_hf = res["hf_samples"].probs
 
+        if theta_lf.ndim == 3:
+            theta_lf = theta_lf.flatten(start_dim=0, end_dim=1)
+        if theta_hf.ndim == 3:
+            theta_hf = theta_hf.flatten(start_dim=0, end_dim=1)
+        
+        theta_lf = theta_lf.T
+        theta_hf = theta_hf.T
 
-        theta_lf = theta_lf.probs.T
-        theta_hf = theta_hf.probs.T
+        # theta_lf = theta_lf.probs.T
+        # theta_hf = theta_hf.probs.T
 
         one_minus_theta_lf = 1 - theta_lf
         one_minus_theta_hf = 1 - theta_hf
@@ -147,6 +157,8 @@ class BatchBALDBMFALStrategy(BiFidelityBatchALStrategy):
         logp_n_m_c_lf = torch.stack([theta_lf, one_minus_theta_lf], dim=-1) # (N, M, 2)
         logp_n_m_c_hf = torch.stack([theta_hf, one_minus_theta_hf], dim=-1) # (N, M, 2)
 
+
+        # import pdb; pdb.set_trace()
         # 2 Compute H(Y|x) and E_w[H(Y|x,w)]
         H_Y_x_N_lf = compute_predicitive_entropy(logp_n_m_c_lf) # H(Y|x) for all pool points
         H_Y_x_N_hf = compute_predicitive_entropy(logp_n_m_c_hf) # H(Y|x) for all pool points

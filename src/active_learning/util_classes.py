@@ -68,6 +68,7 @@ class ALExperimentConfig:
     train_epochs: int = 500
     random_seed: int = 42
     N_reps: int = 5
+    model_name: str = 'BFGPC_ELBO'
     model_args: dict[str, Any] = field(default_factory=lambda: dict())
 
     def __post_init__(self):
